@@ -39,7 +39,9 @@ class AntiOsintStickerPlugin(BasePlugin):
 
         try:
             cache_dir = get_cache_dir()
-            test_file_base = os.path.join(cache_dir, f"tmp_{random.getrandbits(32):08x}")
+            chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            random_test_name = "".join(random.choice(chars) for _ in range(random.randint(8, 20)))
+            test_file_base = os.path.join(cache_dir, random_test_name)
             
             actual_test_path, test_err = self.text_to_webp("Self-test", test_file_base)
             if actual_test_path and os.path.exists(actual_test_path):
@@ -103,12 +105,12 @@ class AntiOsintStickerPlugin(BasePlugin):
                 reply_to_id = self.safe_int(val)
             except Exception:
                 pass
-            if reply_to_id is None:
-                try:
-                    val = getattr(reply_to_obj, "id", None)
-                    reply_to_id = self.safe_int(val)
-                except Exception:
-                    pass
+        if reply_to_id is None:
+            try:
+                val = getattr(reply_to_obj, "id", None)
+                reply_to_id = self.safe_int(val)
+            except Exception:
+                pass
         if reply_to_id is None:
             for attr in ["reply_to_msg_id", "replyToMsgId", "reply_to_message_id", "reply_to_id", "reply_id"]:
                 try:
@@ -211,8 +213,9 @@ class AntiOsintStickerPlugin(BasePlugin):
 
             if should_generate:
                 cache_dir = get_cache_dir()
-                
-                random_filename = f"cached_sticker_{random.getrandbits(32):08x}"
+                chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                random_length = random.randint(10, 25)
+                random_filename = "".join(random.choice(chars) for _ in range(random_length))
                 base_file_path = os.path.join(cache_dir, random_filename)
                 
                 actual_file_path, err_desc = self.text_to_webp(clean_text, base_file_path, text_color)
@@ -261,7 +264,7 @@ class AntiOsintStickerPlugin(BasePlugin):
 
         font_path = self.get_setting("font_path", "").strip().strip("'").strip('"')
         cache_dir = get_cache_dir()
-        
+
         actual_font_path = None
         if font_path:
             possible_path = os.path.join(cache_dir, font_path)
