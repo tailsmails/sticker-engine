@@ -1,0 +1,536 @@
+__id__ = "stk_r8e2b1"
+__name__ = "Sticker Engine"
+__description__ = "Converts outgoing text messages into clean transparent WebP stickers."
+__author__ = "nobody :-)"
+__version__ = "3.8.0"
+__icon__ = "exteraPlugins/1"
+__app_version__ = ">=12.8.1"
+__sdk_version__ = ">=1.4.3.10"
+
+from typing import Any, List, Dict, Optional, Tuple
+import time
+import threading
+import os
+import random
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from ui.settings import Header, Switch, Input
+from client_utils import run_on_queue, PLUGINS_QUEUE, send_message, send_document
+from file_utils import get_cache_dir
+from java import jclass
+
+COLORS = {
+    "red": (255, 59, 48),
+    "green": (52, 199, 89),
+    "blue": (0, 122, 255),
+    "yellow": (255, 204, 0),
+    "orange": (255, 149, 0),
+    "purple": (175, 82, 222),
+    "pink": (255, 45, 85),
+    "teal": (90, 200, 250),
+    "gray": (142, 142, 147),
+    "black": (0, 0, 0),
+    "white": (255, 255, 255)
+}
+
+class AntiOsintStickerPlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+        self.log("Sticker Engine (Java Anti-Fingerprint Edition) loaded.")
+
+        try:
+            cache_dir = get_cache_dir()
+            test_file_base = os.path.join(cache_dir, f"tmp_{random.getrandbits(32):08x}")
+            
+            actual_test_path, test_err = self.text_to_webp("Self-test", test_file_base)
+            if actual_test_path and os.path.exists(actual_test_path):
+                try:
+                    os.remove(actual_test_path)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def on_plugin_unload(self):
+        self.log("Sticker Engine unloaded")
+
+    def create_settings(self) -> List[Any]:
+        return [
+            Header(text="Sticker Engine Settings"),
+            Switch(
+                key="sticker_text",
+                text="Enable Sticker Generator",
+                default=True,
+                subtext="Automatically convert all outgoing text messages into clean, transparent WebP stickers.",
+                icon="msg_sticker",
+            ),
+            Input(
+                key="font_path",
+                text="Custom Font Path / Filename",
+                default="",
+                subtext="To prevent device-fingerprinting, place a standard TTF file inside Cache folder (Android/data/.../cache/) and enter its name (e.g. ga.ttf). Avoid leaving this blank.",
+            )
+        ]
+
+    def safe_int(self, val: Any) -> Optional[int]:
+        if val is None:
+            return None
+        for method in ["intValue", "longValue", "doubleValue"]:
+            try:
+                m = getattr(val, method, None)
+                if m is not None and callable(m):
+                    res = int(m())
+                    if res > 0:
+                        return res
+            except Exception:
+                pass
+        try:
+            s = str(val).strip()
+            if s.endswith('L') or s.endswith('l'):
+                s = s[:-1]
+            i = int(float(s))
+            if i > 0:
+                return i
+        except Exception:
+            pass
+        return None
+
+    def find_reply_to_id(self, params: Any) -> Optional[int]:
+        reply_to_id = None
+        reply_to_obj = getattr(params, "replyToMsg", None)
+        if reply_to_obj is not None:
+            try:
+                val = reply_to_obj.getId()
+                reply_to_id = self.safe_int(val)
+            except Exception:
+                pass
+            if reply_to_id is None:
+                try:
+                    val = getattr(reply_to_obj, "id", None)
+                    reply_to_id = self.safe_int(val)
+                except Exception:
+                    pass
+        if reply_to_id is None:
+            for attr in ["reply_to_msg_id", "replyToMsgId", "reply_to_message_id", "reply_to_id", "reply_id"]:
+                try:
+                    val = getattr(params, attr, None)
+                    reply_to_id = self.safe_int(val)
+                    if reply_to_id is not None:
+                        break
+                except Exception:
+                    pass
+        return reply_to_id
+
+    def execute_send_document(self, peer: Any, path: str, reply_id: Optional[int], reply_obj: Any) -> bool:
+        try:
+            from client_utils import send_sticker
+        except ImportError:
+            send_sticker = None
+
+        if send_sticker is not None:
+            if reply_obj is not None:
+                for kw in ["replyToMsg", "reply_to", "reply_to_msg"]:
+                    try:
+                        kwargs = {kw: reply_obj}
+                        send_sticker(peer, path, **kwargs)
+                        return True
+                    except Exception:
+                        pass
+            if reply_id is not None:
+                for kw in ["reply_to_msg_id", "replyToMsg", "reply_to", "reply_id"]:
+                    try:
+                        kwargs = {kw: reply_id}
+                        send_sticker(peer, path, **kwargs)
+                        return True
+                    except Exception:
+                        pass
+
+        if reply_obj is not None:
+            for kw in ["replyToMsg", "reply_to", "reply_to_msg"]:
+                try:
+                    kwargs = {kw: reply_obj}
+                    send_document(peer, path, **kwargs)
+                    return True
+                except Exception:
+                    pass
+
+        if reply_id is not None:
+            for kw in ["reply_to_msg_id", "reply_to_message_id", "reply_to_id", "replyToMsgId"]:
+                try:
+                    kwargs = {kw: reply_id}
+                    send_document(peer, path, **kwargs)
+                    return True
+                except Exception:
+                    pass
+
+        try:
+            send_document(peer, path)
+            return True
+        except Exception:
+            return False
+
+    def on_send_message_hook(self, account: int, params: Any) -> HookResult:
+        try:
+            message = getattr(params, "message", None)
+            if not message or not isinstance(message, str):
+                return HookResult()
+
+            message_str = message.strip()
+            if not message_str:
+                return HookResult()
+
+            if message_str.startswith(".") or message_str.startswith("/"):
+                return HookResult()
+
+            if message_str.startswith("!nose "):
+                params.message = message_str[6:].strip()
+                return HookResult()
+
+            force_sticker = False
+            text_color = (255, 255, 255)
+            clean_text = message_str
+
+            if message_str.startswith("!se "):
+                force_sticker = True
+                command_body = message_str[4:].strip()
+                parts = command_body.split(" ", 1)
+                if len(parts) > 0:
+                    potential_color = parts[0].lower()
+                    if potential_color in COLORS:
+                        text_color = COLORS[potential_color]
+                        if len(parts) > 1:
+                            clean_text = parts[1].strip()
+                        else:
+                            clean_text = ""
+                    else:
+                        clean_text = command_body
+
+            if not clean_text:
+                return HookResult()
+
+            should_generate = force_sticker or self.get_setting("sticker_text", True)
+
+            if should_generate:
+                cache_dir = get_cache_dir()
+                
+                random_filename = f"cached_sticker_{random.getrandbits(32):08x}"
+                base_file_path = os.path.join(cache_dir, random_filename)
+                
+                actual_file_path, err_desc = self.text_to_webp(clean_text, base_file_path, text_color)
+
+                if actual_file_path and os.path.exists(actual_file_path):
+                    peer = getattr(params, "peer", None)
+                    
+                    reply_to_id = self.find_reply_to_id(params)
+                    reply_to_obj = getattr(params, "replyToMsg", None)
+                    if reply_to_obj is None:
+                        reply_to_obj = getattr(params, "reply_to_msg", None)
+
+                    def run_send():
+                        self.execute_send_document(peer, actual_file_path, reply_to_id, reply_to_obj)
+
+                    run_on_queue(run_send, PLUGINS_QUEUE)
+
+                    def cleanup():
+                        time.sleep(10.0)
+                        try:
+                            if os.path.exists(actual_file_path):
+                                os.remove(actual_file_path)
+                        except Exception:
+                            pass
+                    threading.Thread(target=cleanup).start()
+
+                    return HookResult(strategy=HookStrategy.CANCEL)
+                else:
+                    return HookResult()
+        except Exception:
+            return HookResult()
+
+    def check_rtl(self, text: str) -> bool:
+        for char in text:
+            if char.isalpha():
+                return '\u0600' <= char <= '\u08FF' or '\uFB50' <= char <= '\uFEFF'
+        return False
+
+    def text_to_webp(self, text: str, base_path: str, text_color: Tuple[int, int, int] = (255, 255, 255)) -> Tuple[Optional[str], Optional[str]]:
+        text = str(text)
+        base_path = str(base_path)
+        is_rtl_text = self.check_rtl(text)
+
+        font_size = 38
+        max_line_width = 450.0
+
+        font_path = self.get_setting("font_path", "").strip().strip("'").strip('"')
+        cache_dir = get_cache_dir()
+        
+        actual_font_path = None
+        if font_path:
+            possible_path = os.path.join(cache_dir, font_path)
+            if os.path.exists(possible_path):
+                actual_font_path = possible_path
+            elif os.path.exists(font_path):
+                actual_font_path = font_path
+
+        try:
+            Bitmap = jclass("android.graphics.Bitmap")
+            Canvas = jclass("android.graphics.Canvas")
+            Paint = jclass("android.graphics.Paint")
+            Typeface = jclass("android.graphics.Typeface")
+            FileOutputStream = jclass("java.io.FileOutputStream")
+            String = jclass("java.lang.String")
+
+            try:
+                BitmapConfig = Bitmap.Config
+            except Exception:
+                try:
+                    BitmapConfig = jclass("android.graphics.Bitmap$Config")
+                except Exception:
+                    BitmapConfig = None
+
+            argb_config = None
+            if BitmapConfig is not None:
+                argb_config = getattr(BitmapConfig, "ARGB_8888", None)
+            if argb_config is None:
+                argb_config = Bitmap.Config.ARGB_8888
+
+            try:
+                CompressFormat = Bitmap.CompressFormat
+            except Exception:
+                try:
+                    CompressFormat = jclass("android.graphics.Bitmap$CompressFormat")
+                except Exception:
+                    CompressFormat = None
+
+            webp_format = None
+            if CompressFormat is not None:
+                for attr_name in ["WEBP_LOSSY", "WEBP", "WEBP_LOSSLESS"]:
+                    try:
+                        webp_format = getattr(CompressFormat, attr_name, None)
+                        if webp_format is not None:
+                            break
+                    except Exception:
+                        pass
+            if webp_format is None:
+                webp_format = Bitmap.CompressFormat.WEBP
+
+            paint = Paint()
+            paint.setAntiAlias(True)
+            paint.setSubpixelText(False)   
+            paint.setLinearText(True)      
+            try:
+                paint.setHinting(0)        
+            except Exception:
+                pass
+
+            if actual_font_path and os.path.exists(actual_font_path):
+                try:
+                    java_path_obj = String(actual_font_path)
+                    typeface = Typeface.createFromFile(java_path_obj)
+                    if typeface is not None:
+                        paint.setTypeface(typeface)
+                except Exception:
+                    paint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL))
+            else:
+                paint.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL))
+
+            paint.setTextSize(float(font_size))
+            paint.setARGB(255, text_color[0], text_color[1], text_color[2])
+
+            paragraphs = text.split("\n")
+            lines = []
+            for para in paragraphs:
+                if not para.strip():
+                    lines.append("")
+                    continue
+                words = para.split(" ")
+                current_line = ""
+                for word in words:
+                    test_line = current_line + " " + word if current_line else word
+                    try:
+                        measured_w = paint.measureText(str(test_line))
+                    except Exception:
+                        measured_w = len(test_line) * (font_size * 0.5)
+                    
+                    if measured_w <= max_line_width:
+                        current_line = test_line
+                    else:
+                        if current_line:
+                            lines.append(current_line)
+                        current_line = word
+                if current_line:
+                    lines.append(current_line)
+
+            fontMetrics = paint.getFontMetricsInt()
+            line_height = fontMetrics.bottom - fontMetrics.top
+            
+            total_text_height = 0
+            for i in range(len(lines)):
+                if i > 0:
+                    total_text_height += (24 + random.uniform(-4, 4))
+                total_text_height += line_height
+
+            max_text_width = 0
+            for line in lines:
+                if line:
+                    w = paint.measureText(str(line))
+                    if w > max_text_width:
+                        max_text_width = w
+
+            text_w = max_text_width + 40
+            text_h = total_text_height + 100
+
+            if text_w >= text_h:
+                scale = 512.0 / text_w
+                target_width = 512
+                target_height = int(text_h * scale)
+                if target_height > 512:
+                    target_height = 512
+            else:
+                scale = 512.0 / text_h
+                target_height = 512
+                target_width = int(text_w * scale)
+                if target_width > 512:
+                    target_width = 512
+
+            target_width = max(100, target_width)
+            target_height = max(100, target_height)
+
+            scaled_font_size = font_size * scale
+            paint.setTextSize(float(scaled_font_size))
+            paint.setTextScaleX(float(random.uniform(0.95, 1.05)))
+            
+            fontMetrics = paint.getFontMetricsInt()
+            line_height = fontMetrics.bottom - fontMetrics.top
+            font_top = fontMetrics.top
+
+            bitmap = Bitmap.createBitmap(target_width, target_height, argb_config)
+            canvas = Canvas(bitmap)
+            canvas.drawColor(int(0))
+
+            skew_x = random.uniform(-0.05, 0.05)
+            canvas.skew(float(skew_x), 0.0)
+
+            shadow_paint = Paint()
+            shadow_paint.setAntiAlias(True)
+            shadow_paint.setSubpixelText(False)
+            shadow_paint.setLinearText(True)
+            try:
+                shadow_paint.setHinting(0)
+            except Exception:
+                pass
+            shadow_paint.setARGB(160, 0, 0, 0)
+            shadow_paint.setTextSize(paint.getTextSize())
+            try:
+                shadow_paint.setTypeface(paint.getTypeface())
+            except Exception:
+                pass
+
+            try:
+                current_align_enum = paint.getTextAlign()
+                if is_rtl_text:
+                    align_val = current_align_enum.valueOf("RIGHT")
+                else:
+                    align_val = current_align_enum.valueOf("LEFT")
+                paint.setTextAlign(align_val)
+                shadow_paint.setTextAlign(align_val)
+                
+                if is_rtl_text:
+                    x_pos = float(target_width - (20.0 * scale))
+                else:
+                    x_pos = float(20.0 * scale)
+            except Exception:
+                x_pos = float(20.0 * scale)
+
+            start_y = (20.0 * scale) - font_top
+            current_y = start_y
+
+            for i, line in enumerate(lines):
+                if not line:
+                    line_gap = (24 + random.uniform(-4, 4)) * scale
+                    current_y += line_height + line_gap
+                    continue
+                
+                y = float(current_y)
+                jitter_x = (1.5 + random.uniform(-0.15, 0.15)) * scale
+                jitter_y = (1.5 + random.uniform(-0.15, 0.15)) * scale
+                text_jitter_x = random.uniform(-0.05, 0.05) * scale
+                text_jitter_y = random.uniform(-0.05, 0.05) * scale
+
+                try:
+                    canvas.drawText(str(line), float(x_pos + jitter_x), y + jitter_y, shadow_paint)
+                    canvas.drawText(str(line), float(x_pos + text_jitter_x), y + text_jitter_y, paint)
+                except Exception:
+                    pass
+                
+                line_gap = (24 + random.uniform(-4, 4)) * scale
+                current_y += line_height + line_gap
+
+            try:
+                PorterDuff = jclass("android.graphics.PorterDuff")
+                PorterDuffXfermode = jclass("android.graphics.PorterDuffXfermode")
+                
+                PorterDuffMode = None
+                try:
+                    PorterDuffMode = jclass("android.graphics.PorterDuff$Mode")
+                except Exception:
+                    try:
+                        PorterDuffMode = getattr(PorterDuff, "Mode", None)
+                    except Exception:
+                        pass
+                
+                if PorterDuffMode is not None:
+                    src_atop_mode = getattr(PorterDuffMode, "SRC_ATOP", None)
+                    if src_atop_mode is not None:
+                        noise_paint = Paint()
+                        noise_paint.setAntiAlias(True)
+                        noise_paint.setXfermode(PorterDuffXfermode(src_atop_mode))
+                        
+                        for _ in range(80):
+                            r_r = random.randint(0, 255)
+                            r_g = random.randint(0, 255)
+                            r_b = random.randint(0, 255)
+                            r_a = random.randint(12, 38)
+                            noise_paint.setARGB(r_a, r_r, r_g, r_b)
+                            noise_paint.setStrokeWidth(float(random.uniform(1.0, 3.0)))
+                            
+                            x1 = float(random.uniform(0, target_width))
+                            y1 = float(random.uniform(0, target_height))
+                            x2 = float(random.uniform(0, target_width))
+                            y2 = float(random.uniform(0, target_height))
+                            canvas.drawLine(x1, y1, x2, y2, noise_paint)
+                        
+                        for _ in range(120):
+                            r_r = random.randint(0, 255)
+                            r_g = random.randint(0, 255)
+                            r_b = random.randint(0, 255)
+                            r_a = random.randint(15, 50)
+                            noise_paint.setARGB(r_a, r_r, r_g, r_b)
+                            
+                            cx = float(random.uniform(0, target_width))
+                            cy = float(random.uniform(0, target_height))
+                            radius = float(random.uniform(1.0, 4.0))
+                            canvas.drawCircle(cx, cy, radius, noise_paint)
+            except Exception:
+                pass
+
+            file_path = base_path + ".webp"
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            out = FileOutputStream(file_path)
+            try:
+                compress_quality = random.randint(76, 84)
+                bitmap.compress(webp_format, compress_quality, out)
+                out.flush()
+            finally:
+                try:
+                    out.close()
+                except Exception:
+                    pass
+                try:
+                    if bitmap is not None and not bitmap.isRecycled():
+                        bitmap.recycle()
+                except Exception:
+                    pass
+            return file_path, None
+
+        except Exception as java_err:
+            return None, f"Java Error: {java_err}"
