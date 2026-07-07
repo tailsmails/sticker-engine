@@ -431,7 +431,7 @@ class AyuPlusPlugin(BasePlugin):
             self.hook_all_methods(Socket, "connect", SocketConnectHook(self))
         except Exception:
             pass
-
+            
         self.add_hook("TL_channels_joinChannel")
         self.add_hook("TL_channels_leaveChannel")
         self.add_hook("TL_messages_setTyping")
@@ -448,6 +448,8 @@ class AyuPlusPlugin(BasePlugin):
         self.add_hook("TL_messages_forwardMessages")
         self.add_hook("TL_messages_sendInlineBotResult")
         self.add_hook("getWebPage", match_substring=True)
+        self.add_hook("TL_account_updateStatus")
+        self.add_hook("updateStatus", match_substring=True)
 
         run_on_ui_thread(self.initialize_restoration, 3000)
 
@@ -1010,6 +1012,17 @@ class AyuPlusPlugin(BasePlugin):
         run_on_queue(run, PLUGINS_QUEUE)
 
     def pre_request_hook(self, request_name: str, account: int, request: Any) -> HookResult:
+        if "updateStatus" in request_name or "TL_account_updateStatus" in request_name:
+            try:
+                offline = getattr(request, "offline", False)
+                if not offline:
+                    return HookResult(strategy=HookStrategy.CANCEL)
+            except Exception:
+                return HookResult(strategy=HookStrategy.CANCEL)
+                
+        if "setTyping" in request_name or "TL_messages_setTyping" in request_name:
+            return HookResult(strategy=HookStrategy.CANCEL)
+
         try:
             target_field = None
             if hasattr(request, "schedule_date"):
@@ -1024,9 +1037,23 @@ class AyuPlusPlugin(BasePlugin):
                 conn_manager = ConnectionsManager.getInstance(account)
                 server_time = conn_manager.getCurrentTime()
                 local_time = int(time.time())
+                conn_state = conn_manager.getConnectionState()
+                is_unstable = (conn_state != 3) or (server_time < 1704067200)
+
                 if server_time < 1704067200:
                     server_time = local_time
                 now = max(server_time, local_time)
+                final_delay = self.get_calculated_delay(account, request_name)
+                ref_delay = final_delay
+                half_ref = ref_delay / 2.0
+                
+                if account in self.last_scheduled_time:
+                    time_remaining = self.last_scheduled_time[account] - now
+                    if (0 < time_remaining < half_ref or time_remaining <= 0) and len(self.queues.get(account, [])) > 0:
+                        final_delay = ref_delay + ref_delay
+                        
+                if is_unstable:
+                    final_delay = max(final_delay, 120)
 
                 if sched_date > 0:
                     diff = sched_date - now
@@ -1047,7 +1074,6 @@ class AyuPlusPlugin(BasePlugin):
                             adjusted_schedule = self.adjust_to_active_hours(calculated_schedule)
                             final_schedule = int(adjusted_schedule)
                         else:
-                            final_delay = self.get_calculated_delay(account, request_name)
                             slow_mode_delay = self.get_slow_mode_seconds(account, getattr(request, "peer", None))
                             final_delay = max(final_delay, slow_mode_delay)
 
@@ -1065,30 +1091,30 @@ class AyuPlusPlugin(BasePlugin):
                             request.flags = int(request.flags) | 1024
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
                     else:
-                        safety_threshold = now + 15
+                        safety_threshold = now + (120 if is_unstable else 25)
                         if sched_date < safety_threshold:
                             setattr(request, target_field, safety_threshold)
                             if hasattr(request, "flags"):
                                 request.flags = int(request.flags) | 1024
                             return HookResult(strategy=HookStrategy.MODIFY, request=request)
                 else:
-                    if self.get_setting("enable_queue", True):
-                        final_delay = self.get_calculated_delay(account, request_name)
+                    slow_mode_delay = self.get_slow_mode_seconds(account, getattr(request, "peer", None))
+                    final_delay = max(final_delay, slow_mode_delay)
 
-                        if not hasattr(self, "last_scheduled_time"):
-                            self.last_scheduled_time = {}
-                        if account not in self.last_scheduled_time:
-                            self.last_scheduled_time[account] = 0
+                    if not hasattr(self, "last_scheduled_time"):
+                        self.last_scheduled_time = {}
+                    if account not in self.last_scheduled_time:
+                        self.last_scheduled_time[account] = 0
 
-                        calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
-                        self.last_scheduled_time[account] = calculated_schedule
+                    calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
+                    self.last_scheduled_time[account] = calculated_schedule
 
-                        setattr(request, target_field, int(calculated_schedule))
+                    setattr(request, target_field, int(calculated_schedule))
 
-                        if hasattr(request, "flags"):
-                            request.flags = int(request.flags) | 1024
+                    if hasattr(request, "flags"):
+                        request.flags = int(request.flags) | 1024
 
-                        return HookResult(strategy=HookStrategy.MODIFY, request=request)
+                    return HookResult(strategy=HookStrategy.MODIFY, request=request)
         except Exception:
             pass
 
@@ -1212,14 +1238,6 @@ class AyuPlusPlugin(BasePlugin):
                                 self.ghost_leaving_channels[account] = set()
                             self.ghost_leaving_channels[account].add(channel_id)
                             return HookResult()
-            except Exception:
-                pass
-        elif request_name == "TL_messages_setTyping":
-            try:
-                peer = getattr(request, "peer", None)
-                channel_id = self.get_channel_id_from_peer(peer)
-                if channel_id and self.is_ghost_joined(account, channel_id):
-                    return HookResult(strategy=HookStrategy.CANCEL)
             except Exception:
                 pass
         return HookResult()
