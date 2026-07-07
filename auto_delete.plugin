@@ -105,12 +105,16 @@ class StealthAutoDelete(BasePlugin):
         try:
             peer = getattr(msg, "peer_id", None) or getattr(msg, "to_id", None)
             if peer is not None:
-                if hasattr(peer, "user_id"):
+                user_id = getattr(peer, "user_id", 0)
+                chat_id = getattr(peer, "chat_id", 0)
+                channel_id = getattr(peer, "channel_id", 0)
+
+                if user_id != 0:
                     return "pv"
-                elif hasattr(peer, "chat_id"):
+                elif chat_id != 0:
                     return "group"
-                elif hasattr(peer, "channel_id"):
-                    ch_id = int(getattr(peer, "channel_id"))
+                elif channel_id != 0:
+                    ch_id = int(channel_id)
                     try:
                         chat = get_messages_controller().getChat(ch_id)
                         if chat is not None:
@@ -131,7 +135,7 @@ class StealthAutoDelete(BasePlugin):
             media = getattr(msg, "media", None)
             if media is None:
                 return "text"
-
+                
             m_type = media.__class__.__name__
             if "Photo" in m_type:
                 return "photo"
@@ -181,12 +185,16 @@ class StealthAutoDelete(BasePlugin):
 
             peer = getattr(msg, "peer_id", None) or getattr(msg, "to_id", None)
             if peer is not None:
-                if hasattr(peer, "user_id"):
-                    return int(getattr(peer, "user_id"))
-                elif hasattr(peer, "chat_id"):
-                    return -int(getattr(peer, "chat_id"))
-                elif hasattr(peer, "channel_id"):
-                    return -int(getattr(peer, "channel_id"))
+                user_id = getattr(peer, "user_id", 0)
+                chat_id = getattr(peer, "chat_id", 0)
+                channel_id = getattr(peer, "channel_id", 0)
+
+                if user_id != 0:
+                    return int(user_id)
+                elif chat_id != 0:
+                    return -int(chat_id)
+                elif channel_id != 0:
+                    return -int(channel_id)
         except Exception as e:
             self.log(f"Error getting dialog ID: {e}")
         return 0
@@ -219,12 +227,12 @@ class StealthAutoDelete(BasePlugin):
 
                 text = str(getattr(msg, "message", "") or "")
                 if text.startswith("!nodel"):
-                    break
+                    continue
 
                 chat_type = self._get_chat_type(msg)
                 cfg_prefix = "pv" if chat_type == "pv" else ("gp" if chat_type == "group" else "ch")
                 if not self.get_setting(f"{cfg_prefix}_enabled", True):
-                    break
+                    continue
 
                 dialog_id = self._get_dialog_id(msg)
 
@@ -237,7 +245,6 @@ class StealthAutoDelete(BasePlugin):
                         delay = self._get_delay_seconds_for_type(chat_type, media_type)
                         delete_at = int(time.time()) + delay
                         self._add_to_queue(msg_id, dialog_id, delete_at)
-                    break
         except Exception as e:
             self.log(f"Error in post_request_hook: {e}")
         return HookResult(strategy=HookStrategy.DEFAULT)
@@ -252,22 +259,26 @@ class StealthAutoDelete(BasePlugin):
                 if peer is None:
                     return HookResult()
 
+                user_id = getattr(peer, "user_id", 0)
+                chat_id = getattr(peer, "chat_id", 0)
+                channel_id = getattr(peer, "channel_id", 0)
+
                 dialog_id = 0
-                if hasattr(peer, "user_id"):
-                    dialog_id = int(getattr(peer, "user_id"))
-                elif hasattr(peer, "chat_id"):
-                    dialog_id = -int(getattr(peer, "chat_id"))
-                elif hasattr(peer, "channel_id"):
-                    dialog_id = -int(getattr(peer, "channel_id"))
+                if user_id != 0:
+                    dialog_id = int(user_id)
+                elif chat_id != 0:
+                    dialog_id = -int(chat_id)
+                elif channel_id != 0:
+                    dialog_id = -int(channel_id)
 
                 if not dialog_id:
                     return HookResult()
 
                 chat_type = "pv"
-                if hasattr(peer, "chat_id"):
+                if chat_id != 0:
                     chat_type = "group"
-                elif hasattr(peer, "channel_id"):
-                    ch_id = int(getattr(peer, "channel_id"))
+                elif channel_id != 0:
+                    ch_id = int(channel_id)
                     try:
                         chat = get_messages_controller().getChat(ch_id)
                         if chat is not None:
@@ -294,6 +305,7 @@ class StealthAutoDelete(BasePlugin):
                     for i in range(size):
                         sched_id = messages.get(i) if is_java_msg else messages[i]
                         real_id = sent_messages.get(i) if is_java_sent else sent_messages[i]
+
                         media_type = self._scheduled_media_types.pop(sched_id, "text")
 
                         delay = self._get_delay_seconds_for_type(chat_type, media_type)
@@ -310,7 +322,7 @@ class StealthAutoDelete(BasePlugin):
                 is_out = getattr(msg, "out", False)
                 if not is_out:
                     return HookResult()
-                    
+
                 upd_type = update.__class__.__name__
                 if "Scheduled" in upd_type:
                     return HookResult()
@@ -338,6 +350,35 @@ class StealthAutoDelete(BasePlugin):
 
     def _delete_msg(self, msg_id, dialog_id):
         try:
+            if not self.get_setting("enabled", True):
+                return
+                
+            if dialog_id > 0:
+                if not self.get_setting("pv_enabled", True):
+                    self._remove_from_queue(msg_id, dialog_id)
+                    if msg_id in self._timers:
+                        del self._timers[msg_id]
+                    return
+            else:
+                is_group = True
+                try:
+                    ch_id = -dialog_id
+                    chat = get_messages_controller().getChat(ch_id)
+                    if chat is not None:
+                        is_megagroup = getattr(chat, "megagroup", False)
+                        chat_classname = chat.__class__.__name__.lower()
+                        if "channel" in chat_classname and not is_megagroup:
+                            is_group = False
+                except Exception:
+                    pass
+
+                cfg_prefix = "gp" if is_group else "ch"
+                if not self.get_setting(f"{cfg_prefix}_enabled", True):
+                    self._remove_from_queue(msg_id, dialog_id)
+                    if msg_id in self._timers:
+                        del self._timers[msg_id]
+                    return
+
             from java.util import ArrayList
             from java.lang import Integer
             msg_list = ArrayList()
