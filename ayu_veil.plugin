@@ -719,6 +719,10 @@ class AyuPlusPlugin(BasePlugin):
             jitter_max = self.get_setting_int("jitter_max", 60)
             if jitter_max > jitter_min:
                 delay += random.randint(jitter_min, jitter_max)
+                
+        min_safe_floor = 30 if was_unstable else 25
+        if delay < min_safe_floor:
+            delay = min_safe_floor
 
         return delay
 
@@ -1036,29 +1040,49 @@ class AyuPlusPlugin(BasePlugin):
 
                 conn_manager = ConnectionsManager.getInstance(account)
                 server_time = conn_manager.getCurrentTime()
+                time_diff = 0
+                try:
+                    time_diff = conn_manager.getTimeDifference()
+                except Exception:
+                    pass
+                
                 local_time = int(time.time())
+                server_time_calculated = local_time + time_diff
                 conn_state = conn_manager.getConnectionState()
-                is_unstable = (conn_state != 3) or (server_time < 1704067200)
+                is_unstable = (conn_state != 3) or (server_time < 1704067200) or (server_time_calculated < 1704067200)
 
                 if server_time < 1704067200:
                     server_time = local_time
-                now = max(server_time, local_time)
+                if server_time_calculated < 1704067200:
+                    server_time_calculated = local_time
+                    
+                now = max(server_time, server_time_calculated, local_time) + 5
                 final_delay = self.get_calculated_delay(account, request_name)
                 ref_delay = final_delay
                 half_ref = ref_delay / 2.0
                 
-                if account in self.last_scheduled_time:
-                    time_remaining = self.last_scheduled_time[account] - now
-                    if (0 < time_remaining < half_ref or time_remaining <= 0) and len(self.queues.get(account, [])) > 0:
-                        final_delay = ref_delay + ref_delay
-                        
+                if not hasattr(self, "last_scheduled_time"):
+                    self.last_scheduled_time = {}
+                if account not in self.last_scheduled_time:
+                    self.last_scheduled_time[account] = now
+                    
+                if self.last_scheduled_time[account] < now:
+                    self.last_scheduled_time[account] = now
+                
+                time_remaining = self.last_scheduled_time[account] - now
+                if (0 < time_remaining < half_ref or time_remaining <= 0) and len(self.queues.get(account, [])) > 0:
+                    final_delay = ref_delay + ref_delay
+                    
                 if is_unstable:
                     final_delay = max(final_delay, 120)
+                    
+                absolute_safety_floor = 30 if is_unstable else 25
+                final_delay = max(final_delay, absolute_safety_floor)
 
                 if sched_date > 0:
                     diff = sched_date - now
-                    is_our_regular = (380 * 86400 <= diff <= 401 * 86400)
-                    is_our_long = (402 * 86400 <= diff <= 411 * 86400)
+                    is_our_regular = (350 * 86400 <= diff <= 405 * 86400)
+                    is_our_long = (406 * 86400 <= diff <= 415 * 86400)
 
                     if is_our_regular or is_our_long:
                         if is_our_long:
@@ -1077,21 +1101,19 @@ class AyuPlusPlugin(BasePlugin):
                             slow_mode_delay = self.get_slow_mode_seconds(account, getattr(request, "peer", None))
                             final_delay = max(final_delay, slow_mode_delay)
 
-                            if not hasattr(self, "last_scheduled_time"):
-                                self.last_scheduled_time = {}
-                            if account not in self.last_scheduled_time:
-                                self.last_scheduled_time[account] = 0
-
                             calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
                             self.last_scheduled_time[account] = calculated_schedule
                             final_schedule = int(calculated_schedule)
+                            
+                        if final_schedule < now + absolute_safety_floor:
+                            final_schedule = now + absolute_safety_floor
 
                         setattr(request, target_field, final_schedule)
                         if hasattr(request, "flags"):
                             request.flags = int(request.flags) | 1024
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
                     else:
-                        safety_threshold = now + (120 if is_unstable else 25)
+                        safety_threshold = now + (120 if is_unstable else absolute_safety_floor)
                         if sched_date < safety_threshold:
                             setattr(request, target_field, safety_threshold)
                             if hasattr(request, "flags"):
@@ -1101,13 +1123,11 @@ class AyuPlusPlugin(BasePlugin):
                     slow_mode_delay = self.get_slow_mode_seconds(account, getattr(request, "peer", None))
                     final_delay = max(final_delay, slow_mode_delay)
 
-                    if not hasattr(self, "last_scheduled_time"):
-                        self.last_scheduled_time = {}
-                    if account not in self.last_scheduled_time:
-                        self.last_scheduled_time[account] = 0
-
                     calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
                     self.last_scheduled_time[account] = calculated_schedule
+                    
+                    if calculated_schedule < now + absolute_safety_floor:
+                        calculated_schedule = now + absolute_safety_floor
 
                     setattr(request, target_field, int(calculated_schedule))
 
