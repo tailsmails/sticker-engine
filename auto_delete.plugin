@@ -1,0 +1,495 @@
+__id__ = "auto_delete"
+__name__ = "Auto Delete"
+__description__ = "Silent self-destruct mechanism with smart delays, file categorization, and nodel commands."
+__author__ = "nobody :-)"
+__version__ = "1.1.0"
+__icon__ = "exteraPlugins/1"
+__min_version__ = "11.12.0"
+
+import os
+import json
+import time
+import random
+import tempfile
+import threading
+from typing import Any
+
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from client_utils import get_messages_controller
+from android_utils import run_on_ui_thread
+from ui.settings import Header, Switch, Divider, Input
+
+class StealthAutoDelete(BasePlugin):
+
+    def on_plugin_load(self):
+        self._lock = threading.Lock()
+        self._timers = {}
+        try:
+            from org.telegram.messenger import ApplicationLoader
+            files_dir = ApplicationLoader.applicationContext.getFilesDir().getAbsolutePath()
+            self._db_path = os.path.join(files_dir, "stealth_delete_pending.json")
+        except Exception:
+            self._db_path = os.path.join(tempfile.gettempdir(), "stealth_delete_pending.json")
+
+        queue = self._load_queue()
+        for item in queue:
+            self._schedule(item["msg_id"], item["dialog_id"], item["delete_at"])
+
+        self.add_hook("TL_messages_sendMessage")
+        self.add_hook("TL_messages_sendMedia")
+        self.add_hook("TL_messages_sendMultiMedia")
+        self.add_hook("TL_updateNewMessage")
+        self.add_hook("TL_updateNewChannelMessage")
+
+    def on_plugin_unload(self):
+        for t in list(self._timers.values()):
+            try:
+                t.cancel()
+            except Exception:
+                pass
+
+    def _load_queue(self):
+        with self._lock:
+            if not os.path.exists(self._db_path):
+                return []
+            try:
+                with open(self._db_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                return []
+
+    def _save_queue(self, queue):
+        with self._lock:
+            try:
+                with open(self._db_path, "w") as f:
+                    json.dump(queue, f)
+            except Exception as e:
+                self.log(f"Failed to save queue: {e}")
+
+    def _add_to_queue(self, msg_id, dialog_id, delete_at):
+        queue = self._load_queue()
+        if not any(item["msg_id"] == msg_id and item["dialog_id"] == dialog_id for item in queue):
+            queue.append({
+                "msg_id": msg_id,
+                "dialog_id": dialog_id,
+                "delete_at": delete_at
+            })
+            self._save_queue(queue)
+            self._schedule(msg_id, dialog_id, delete_at)
+
+    def _remove_from_queue(self, msg_id, dialog_id):
+        queue = self._load_queue()
+        new_queue = [item for item in queue if not (item["msg_id"] == msg_id and item["dialog_id"] == dialog_id)]
+        self._save_queue(new_queue)
+
+    def _schedule(self, msg_id, dialog_id, delete_at):
+        if msg_id in self._timers:
+            try:
+                self._timers[msg_id].cancel()
+            except Exception:
+                pass
+
+        delay = max(0.1, delete_at - int(time.time()))
+
+        def do_delete():
+            run_on_ui_thread(lambda: self._delete_msg(msg_id, dialog_id))
+
+        t = threading.Timer(delay, do_delete)
+        t.daemon = True
+        t.start()
+        self._timers[msg_id] = t
+
+    def _get_chat_type(self, msg) -> str:
+        try:
+            peer = getattr(msg, "peer_id", None) or getattr(msg, "to_id", None)
+            if peer is not None:
+                if hasattr(peer, "user_id"):
+                    return "pv"
+                elif hasattr(peer, "chat_id"):
+                    return "group"
+                elif hasattr(peer, "channel_id"):
+                    ch_id = int(getattr(peer, "channel_id"))
+                    try:
+                        chat = get_messages_controller().getChat(ch_id)
+                        if chat is not None:
+                            is_megagroup = getattr(chat, "megagroup", False)
+                            if is_megagroup:
+                                return "group"
+                            else:
+                                return "channel"
+                    except Exception:
+                        pass
+                    return "group"
+        except Exception:
+            pass
+        return "pv"
+
+    def _get_media_type(self, msg) -> str:
+        try:
+            media = getattr(msg, "media", None)
+            if media is None:
+                return "text"
+
+            m_type = media.__class__.__name__
+            if "Photo" in m_type:
+                return "photo"
+            elif "Document" in m_type:
+                doc = getattr(media, "document", None)
+                if doc is not None:
+                    attrs = getattr(doc, "attributes", None)
+                    if attrs is not None:
+                        for i in range(attrs.size()):
+                            attr = attrs.get(i)
+                            attr_type = attr.__class__.__name__
+                            if "Audio" in attr_type:
+                                return "voice"
+                            elif "Video" in attr_type:
+                                return "video"
+                return "file"
+        except Exception:
+            pass
+        return "text"
+
+    def _get_delay_seconds_for_type(self, chat_type: str, media_type: str) -> int:
+        try:
+            cfg_prefix = "pv" if chat_type == "pv" else ("gp" if chat_type == "group" else "ch")
+            base_key = f"{cfg_prefix}_{media_type}_base_delay"
+            jitter_key = f"{cfg_prefix}_{media_type}_jitter"
+
+            base = int(self.get_setting(base_key, "30"))
+            jitter = int(self.get_setting(jitter_key, "0"))
+        except ValueError:
+            base = 30
+            jitter = 0
+
+        if jitter > 0:
+            return base + random.randint(0, jitter)
+        return base
+
+    def _get_dialog_id(self, msg) -> int:
+        try:
+            if hasattr(msg, "getDialogId"):
+                return int(msg.getDialogId())
+
+            peer = getattr(msg, "peer_id", None) or getattr(msg, "to_id", None)
+            if peer is not None:
+                if hasattr(peer, "user_id"):
+                    return int(getattr(peer, "user_id"))
+                elif hasattr(peer, "chat_id"):
+                    return -int(getattr(peer, "chat_id"))
+                elif hasattr(peer, "channel_id"):
+                    return -int(getattr(peer, "channel_id"))
+        except Exception as e:
+            self.log(f"Error getting dialog ID: {e}")
+        return 0
+
+    def post_request_hook(self, request_name: str, account: int, response: Any, error: Any) -> HookResult:
+        try:
+            if request_name not in ("TL_messages_sendMessage", "TL_messages_sendMedia", "TL_messages_sendMultiMedia") or error:
+                return HookResult(strategy=HookStrategy.DEFAULT)
+
+            if not self.get_setting("enabled", True):
+                return HookResult(strategy=HookStrategy.DEFAULT)
+
+            updates = response
+            msgs = getattr(updates, "updates", None)
+            if msgs is None:
+                return HookResult(strategy=HookStrategy.DEFAULT)
+
+            for i in range(msgs.size()):
+                upd = msgs.get(i)
+                msg = getattr(upd, "message", None)
+                if msg is None:
+                    continue
+                msg_id = getattr(msg, "id", 0)
+                if not msg_id:
+                    continue
+
+                text = str(getattr(msg, "message", "") or "")
+                if text.startswith("!nodel"):
+                    break
+
+                chat_type = self._get_chat_type(msg)
+                cfg_prefix = "pv" if chat_type == "pv" else ("gp" if chat_type == "group" else "ch")
+                if not self.get_setting(f"{cfg_prefix}_enabled", True):
+                    break
+
+                dialog_id = self._get_dialog_id(msg)
+
+                if msg_id and dialog_id:
+                    media_type = self._get_media_type(msg)
+                    delay = self._get_delay_seconds_for_type(chat_type, media_type)
+                    delete_at = int(time.time()) + delay
+                    self._add_to_queue(msg_id, dialog_id, delete_at)
+                    break
+        except Exception as e:
+            self.log(f"Error in post_request_hook: {e}")
+        return HookResult(strategy=HookStrategy.DEFAULT)
+
+    def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
+        try:
+            if update_name in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
+                if not self.get_setting("enabled", True):
+                    return HookResult()
+
+                msg = getattr(update, "message", None)
+                if msg is None:
+                    return HookResult()
+
+                is_out = getattr(msg, "out", False)
+                if not is_out:
+                    return HookResult()
+
+                text = str(getattr(msg, "message", "") or "")
+                if text.startswith("!nodel"):
+                    return HookResult()
+
+                chat_type = self._get_chat_type(msg)
+                cfg_prefix = "pv" if chat_type == "pv" else ("gp" if chat_type == "group" else "ch")
+                if not self.get_setting(f"{cfg_prefix}_enabled", True):
+                    return HookResult()
+
+                msg_id = getattr(msg, "id", 0)
+                dialog_id = self._get_dialog_id(msg)
+
+                if msg_id and dialog_id:
+                    media_type = self._get_media_type(msg)
+                    delay = self._get_delay_seconds_for_type(chat_type, media_type)
+                    delete_at = int(time.time()) + delay
+                    self._add_to_queue(msg_id, dialog_id, delete_at)
+        except Exception as e:
+            self.log(f"Error in on_update_hook: {e}")
+        return HookResult()
+
+    def _delete_msg(self, msg_id, dialog_id):
+        try:
+            from java.util import ArrayList
+            from java.lang import Integer
+            msg_list = ArrayList()
+            msg_list.add(Integer(msg_id))
+            get_messages_controller().deleteMessages(
+                msg_list, None, None, dialog_id, 0, True, 0
+            )
+            if msg_id in self._timers:
+                del self._timers[msg_id]
+            self._remove_from_queue(msg_id, dialog_id)
+        except Exception as e:
+            self.log(f"Failed to delete message {msg_id}: {e}")
+
+    def create_settings(self):
+        return [
+            Header(text="Global Configurations"),
+            Switch(
+                key="enabled",
+                text="Enable Auto Delete",
+                subtext="Master switch to toggle auto delete for all message types.",
+                default=True
+            ),
+            Divider(),
+
+            Header(text="Private Chats"),
+            Switch(
+                key="pv_enabled",
+                text="Enable for Private Chats",
+                subtext="Auto delete sent messages in private DMs.",
+                default=True
+            ),
+            Input(
+                key="pv_text_base_delay",
+                text="Text Base Delay (seconds)",
+                subtext="Deletion delay for plain text messages in PV.",
+                default="30"
+            ),
+            Input(
+                key="pv_text_jitter",
+                text="Text Jitter (seconds)",
+                subtext="Maximum extra delay variance for PV text messages.",
+                default="0"
+            ),
+            Input(
+                key="pv_photo_base_delay",
+                text="Photo Base Delay (seconds)",
+                subtext="Deletion delay for photos in PV.",
+                default="30"
+            ),
+            Input(
+                key="pv_photo_jitter",
+                text="Photo Jitter (seconds)",
+                subtext="Maximum extra delay variance for PV photos.",
+                default="0"
+            ),
+            Input(
+                key="pv_video_base_delay",
+                text="Video Base Delay (seconds)",
+                subtext="Deletion delay for videos in PV.",
+                default="30"
+            ),
+            Input(
+                key="pv_video_jitter",
+                text="Video Jitter (seconds)",
+                subtext="Maximum extra delay variance for PV videos.",
+                default="0"
+            ),
+            Input(
+                key="pv_voice_base_delay",
+                text="Voice Base Delay (seconds)",
+                subtext="Deletion delay for voice notes in PV.",
+                default="30"
+            ),
+            Input(
+                key="pv_voice_jitter",
+                text="Voice Jitter (seconds)",
+                subtext="Maximum extra delay variance for PV voice notes.",
+                default="0"
+            ),
+            Input(
+                key="pv_file_base_delay",
+                text="File Base Delay (seconds)",
+                subtext="Deletion delay for general files and documents in PV.",
+                default="30"
+            ),
+            Input(
+                key="pv_file_jitter",
+                text="File Jitter (seconds)",
+                subtext="Maximum extra delay variance for PV files.",
+                default="0"
+            ),
+            Divider(),
+
+            Header(text="Groups & Supergroups"),
+            Switch(
+                key="gp_enabled",
+                text="Enable for Groups",
+                subtext="Auto delete sent messages in group chats.",
+                default=True
+            ),
+            Input(
+                key="gp_text_base_delay",
+                text="Text Base Delay (seconds)",
+                subtext="Deletion delay for plain text messages in groups.",
+                default="30"
+            ),
+            Input(
+                key="gp_text_jitter",
+                text="Text Jitter (seconds)",
+                subtext="Maximum extra delay variance for group text messages.",
+                default="0"
+            ),
+            Input(
+                key="gp_photo_base_delay",
+                text="Photo Base Delay (seconds)",
+                subtext="Deletion delay for photos in groups.",
+                default="30"
+            ),
+            Input(
+                key="gp_photo_jitter",
+                text="Photo Jitter (seconds)",
+                subtext="Maximum extra delay variance for group photos.",
+                default="0"
+            ),
+            Input(
+                key="gp_video_base_delay",
+                text="Video Base Delay (seconds)",
+                subtext="Deletion delay for videos in groups.",
+                default="30"
+            ),
+            Input(
+                key="gp_video_jitter",
+                text="Video Jitter (seconds)",
+                subtext="Maximum extra delay variance for group videos.",
+                default="0"
+            ),
+            Input(
+                key="gp_voice_base_delay",
+                text="Voice Base Delay (seconds)",
+                subtext="Deletion delay for voice notes in groups.",
+                default="30"
+            ),
+            Input(
+                key="gp_voice_jitter",
+                text="Voice Jitter (seconds)",
+                subtext="Maximum extra delay variance for group voice notes.",
+                default="0"
+            ),
+            Input(
+                key="gp_file_base_delay",
+                text="File Base Delay (seconds)",
+                subtext="Deletion delay for general files and documents in groups.",
+                default="30"
+            ),
+            Input(
+                key="gp_file_jitter",
+                text="File Jitter (seconds)",
+                subtext="Maximum extra delay variance for group files.",
+                default="0"
+            ),
+            Divider(),
+
+            Header(text="Broadcast Channels"),
+            Switch(
+                key="ch_enabled",
+                text="Enable for Channels",
+                subtext="Auto delete sent messages in channels.",
+                default=True
+            ),
+            Input(
+                key="ch_text_base_delay",
+                text="Text Base Delay (seconds)",
+                subtext="Deletion delay for plain text messages in channels.",
+                default="30"
+            ),
+            Input(
+                key="ch_text_jitter",
+                text="Text Jitter (seconds)",
+                subtext="Maximum extra delay variance for channel text messages.",
+                default="0"
+            ),
+            Input(
+                key="ch_photo_base_delay",
+                text="Photo Base Delay (seconds)",
+                subtext="Deletion delay for photos in channels.",
+                default="30"
+            ),
+            Input(
+                key="ch_photo_jitter",
+                text="Photo Jitter (seconds)",
+                subtext="Maximum extra delay variance for channel photos.",
+                default="0"
+            ),
+            Input(
+                key="ch_video_base_delay",
+                text="Video Base Delay (seconds)",
+                subtext="Deletion delay for videos in channels.",
+                default="30"
+            ),
+            Input(
+                key="ch_video_jitter",
+                text="Video Jitter (seconds)",
+                subtext="Maximum extra delay variance for channel videos.",
+                default="0"
+            ),
+            Input(
+                key="ch_voice_base_delay",
+                text="Voice Base Delay (seconds)",
+                subtext="Deletion delay for voice notes in channels.",
+                default="30"
+            ),
+            Input(
+                key="ch_voice_jitter",
+                text="Voice Jitter (seconds)",
+                subtext="Maximum extra delay variance for channel voice notes.",
+                default="0"
+            ),
+            Input(
+                key="ch_file_base_delay",
+                text="File Base Delay (seconds)",
+                subtext="Deletion delay for general files and documents in channels.",
+                default="30"
+            ),
+            Input(
+                key="ch_file_jitter",
+                text="File Jitter (seconds)",
+                subtext="Maximum extra delay variance for channel files.",
+                default="0"
+            )
+        ]
