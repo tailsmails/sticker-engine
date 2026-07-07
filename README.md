@@ -1,9 +1,10 @@
-# Sticker Engine & AyuVeil
+# Sticker Engine / AyuVeil / Auto Delete
 
-A privacy-conscious, client-hardening experiment for modded Telegram clients (exteraGram/AyuGram).
+A privacy-conscious, client-hardening experiment for modded Telegram clients (exteraGram/AyuGram). 
 
 *   **Sticker Engine (Core Component):** An experimental text-to-image WebP renderer designed to raise the computational barrier for automated text scrapers.
 *   **AyuVeil (Auxiliary Tool):** A collection of API hooks and filters aimed at reducing some common client-side metadata leaks and telemetry.
+*   **Stealth Auto Delete (Auxiliary Tool):** A smart, randomized self-destruct mechanism designed to starve passive data scrapers.
 
 ---
 
@@ -15,6 +16,7 @@ A privacy-conscious, client-hardening experiment for modded Telegram clients (ex
 3.  **Fragility of Client Hooks:** AyuVeil relies on low-level Java method hooking. Any major update to the Telegram codebase may break these hooks silently, potentially re-enabling telemetry, VoIP, or WebApp loads without warning.
 4.  **No Protection Against Device Compromise:** If your operating system is compromised (via keyloggers, screen scraping, or spyware), client-side modifications are completely ineffective.
 5.  **Platform Ban Risk:** Using low-level hooks to block system requests and modify API payloads on the fly always carries a non-zero risk of client instability or platform-level account bans. Use at your own risk.
+6.  **API Rate Limits (Flood Wait):** Sending a media file (WebP) for every single text message hits Telegram's API harder than standard text. Rapid-fire messaging (spamming short texts) *will* trigger temporary anti-spam limits (Flood Wait). Type longer messages, send fewer times.
 
 ---
 
@@ -29,108 +31,105 @@ This module intercepts outgoing text and renders it to a transparent WebP image.
 * **Canvas Skewing:** Skews the text on the X-axis to disrupt basic baseline-based OCR readers.
 * **Adversarial Noise Overlays:** Uses `SRC_ATOP` blending to overlay random lines and dots over text bounds, disrupting machine-driven character segmentation.
 
----
-
 ### 2. AyuVeil (Auxiliary Hardening Component)
-AyuVeil is a companion component that uses method hooks and MTProto request filtering to limit client telemetry and mitigate certain attack vectors.
+A companion component that uses method hooks and MTProto request filtering to limit client telemetry and mitigate certain attack vectors.
 
 #### Technical Architecture:
-* **Parser Isolation:** Hooks render-critical methods in `MessageObject`, `ChatMessageCell`, `DownloadController`, and `FileLoader`. It forces incoming messages (`not out`) to strip `media` payloads (replacing them with `TLRPC$TL_messageMediaEmpty`), `reply_markup` configurations, and `entities`. This reduces the rendering attack surface.
-* **IP Leak Reduction:** Intercepts and drops outgoing VoIP requests (`phone.*`, `call.*`) and WebApp initialization vectors (`getWebView`, `requestWebView`), preventing IP harvesting through WebRTC peer-to-peer signalling or silent background browser loads.
+* **Parser Isolation:** Hooks render-critical methods (`MessageObject`, `DownloadController`, etc.). It forces incoming messages (`not out`) to strip `media` payloads and `entities`, replacing them with `TLRPC$TL_messageMediaEmpty`. This reduces the rendering attack surface for zero-click exploits.
+* **IP Leak Reduction:** Intercepts outgoing VoIP requests (`phone.*`, `call.*`) and WebApp initialization vectors, preventing IP harvesting through WebRTC peer-to-peer signalling.
+* **Stealth Inline Queries:** Buffers inline bot queries (e.g., `@pic`). The client will *not* send your keystrokes to the server unless your text ends with a semicolon (`;`).
 * **Telemetry Suppression:** Blocks `saveAppLog` requests and background contact imports (`importContacts`).
-* **Queue Jittering:** Defers outgoing messages into a local queue, dynamically inserting delays into the `scheduleDate` parameters to disrupt automated active-hour tracking.
+* **Queue Jittering:** Defers outgoing messages into a local queue, dynamically inserting delays into `scheduleDate` parameters to disrupt automated active-hour tracking.
+
+### 3. Stealth Auto Delete (Data Starvation)
+A background queue that deletes your sent messages locally and remotely. Unlike Telegram's native auto-delete, this works dynamically based on chat type (PV, Group, Channel) and media type.
+* **The Goal:** Passive scrapers usually run on a delay to avoid API limits. By injecting random jitter into the deletion timer, this tool aims to wipe the message *before* the scraper's polling cycle reaches it.
 
 ---
 
 ## 🇷🇺 Русский (На пальцах и без пафоса)
 
 ### 1. Sticker Engine (Основная фича)
-**Sticker Engine** перехватывает твою писанину прямо перед отправкой и рендерит её в прозрачный WebP-стикер. Сверху накидываются геометрические искажения и искусственная «грязь». 
+Перехватывает твою писанину перед отправкой и рендерит её в прозрачный WebP-стикер с геометрическими искажениями и искусственной «грязью». 
 
-Зачем это надо? Чтобы всякие спамеры, парсеры и боты-агрегаторы (типа Глаза Бога, телеграм-логов и прочей нечисти) обламывались на этапе тупого сбора текста. Чат не скроешь, но парсить его флешкой уже не выйдет.
+Зачем? Чтобы агрегаторы (типа Глаза Бога) обламывались на этапе тупого сбора текста. Чат не скроешь, но парсить его флешкой уже не выйдет.
 
 #### Че под капотом:
-* **Подмена типов:** Вместо обычного текста летит картинка. Простые логгеры, которые умеют читать только текстовые поля в базе, получают дырку от бублика.
-* **Джиттер координат (микро-сдвиги):** Буквы и тени при каждом рендере смещаются на доли пикселя. Из-за этого сглаживание (anti-aliasing) отрабатывает каждый раз по-новому, и у одного и того же текста всегда будет разный хэш файла (SHA-256). Хрен ты найдешь дубликаты по хэшам.
-* **Кривой холст (Skewing):** Слегка косит векторную сетку по оси X. Простые OCR-ки, которые ищут ровную базовую линию текста, сразу начинают спотыкаться.
-* **Шум и помехи:** Через маску смешивания `SRC_ATOP` поверх текста кидаются случайные точки и линии. Это ломает автоматическую разрезку картинки на отдельные символы у роботов.
-
-**Важно:** Чудес не бывает. Нормальные современные нейронки (VLM) и продвинутый софт распознают этот текст на раз-два. Вся суть затеи - заставить того, кто за тобой следит, качать тяжелые WebP вместо килобайта текста и греть свои видюхи на OCR-анализ. Бьем по карману и ресурсам парсеров.
-
----
+* **Подмена типов:** Вместо текста летит картинка. Логгеры, читающие только текстовые поля в базе, идут лесом.
+* **Джиттер координат:** Буквы при каждом рендере смещаются на доли пикселя. У одного и того же текста всегда будет разный хэш файла (SHA-256).
+* **Кривой холст (Skewing):** Слегка косит сетку по оси X. Простые OCR-ки спотыкаются о кривую базовую линию.
+* **Шум и помехи:** Маска `SRC_ATOP` кидает поверх текста случайные точки и линии. Это ломает автоматическую разрезку картинки на символы.
 
 ### 2. AyuVeil (Затыкание дыр и паранойя)
-**AyuVeil** - это набор низкоуровневых хуков (костылей, если угодно) для закручивания гаек в клиенте. Он лезет во внутренние методы приложения и фильтрует трафик к серверам.
+Набор низкоуровневых хуков для закручивания гаек в клиенте.
 
-#### Что умеет:
-* **Защита от Zero-Click уязвимостей (вырезаем медиа):**
-  Хукаем методы в классах `MessageObject`, `ChatMessageCell` (`setMessageObject`), `DownloadController` и `FileLoader`. Если прилетает сообщение от чужака, плагин на лету подменяет структуру `message.media` на пустую заглушку `TLRPC$TL_messageMediaEmpty`, а также вычищает кнопки (`reply_markup`) и форматирование (`entities`). Меньше парсится тяжелыми библиотеками внутри клиента - меньше шансов поймать эксплойт без клика.
-* **Вырезаем WebRTC (прощай, утечка IP через звонки):**
-  В `pre_request_hook` наглухо блокируются любые запросы с сигнатурами телефонии (`phone.*`, `call.*`). Звонки отвалятся совсем, зато никто не вытянет твой реальный IP-адрес через P2P-соединение. Заодно блокируются запросы WebApp (`getWebView`, `requestWebView`) и геолокация (`getLocated`), чтоб сайты внутри телеги не палили твое железо и местоположение.
-* **Блокируем стук на сервера (телеметрию):**
-  Режет отправку отладочных логов (`saveAppLog`), системной статы и фоновый импорт твоих контактов на сервера Дурова (`importContacts`).
-* **Отправка с джиттером времени:**
-  Сообщения не летят сразу, а складываются во внутренний стек и уходят с рандомной задержкой через `scheduleDate`. Сложнее будет сопоставить время твоей активности в сети.
+* **Защита от Zero-Click:** Если прилетает сообщение от чужака, плагин на лету подменяет структуру `message.media` на пустышку и вычищает кнопки. Меньше парсится - меньше шансов поймать эксплойт.
+* **Вырезаем WebRTC:** Блокируются любые запросы телефонии (`phone.*`). Никто не вытянет твой IP через P2P.
+* **Скрытый инлайн:** Запросы к ботам (например, `@pic`) локально блокируются. Они уйдут на сервер **только** если ты поставишь точку с запятой (`;`) в конце запроса. Защита от кейлоггинга.
+* **Анти-телеметрия:** Режет отправку логов (`saveAppLog`) и фоновый импорт контактов.
+* **Джиттер времени:** Сообщения уходят с рандомной задержкой через `scheduleDate`. Сложнее сопоставить время твоей активности.
+
+### 3. Stealth Auto Delete (Голодный паек для парсеров)
+Умная удалялка сообщений. Задает плавающий (рандомный) таймер на удаление в зависимости от типа чата и медиа.
+* **Суть:** Парсеры работают с задержкой, чтобы не ловить лимиты от телеги. Плагин трет твое сообщение до того, как бот-шпион успеет его сграбить.
+
+**ВНИМАНИЕ:** Не спамь короткими сообщениями. Отправка кучи стикеров вместо текста быстро триггерит Flood Wait от телеги. Пиши объемнее, отправляй реже.
 
 ---
 
 ## 🇨🇳 中文
 
 ### 1. Sticker Engine (核心模块)
-本模块在发送阶段拦截你的文本消息，并将其渲染为透明的 WebP 格式动态贴纸。它通过将可被轻易索引的纯文本转换为媒体文件，从而大幅提高群控、监控软件大批量抓取数据的技术和硬件成本。
+在发送阶段拦截文本消息，并将其渲染为透明的 WebP 图像。通过将纯文本转换为媒体文件，大幅提高批量抓取数据的技术和硬件成本。
 
 #### 核心技术点：
-* **类型混淆 (Type Obfuscation)：** 将字符串负载替换为 WebP 图像数据，使仅能读取文本字段的简易爬虫直接抓取空值。
-* **坐标抖动 (Coordinate Jitter)：** 每次渲染时，字形和阴影会在亚像素（Sub-pixel）级别发生微调。这会强制抗锯齿算法生成不同的边缘像素，即使发送完全相同的文本，生成的 WebP 文件的哈希值 (SHA-256) 也会完全不同。
-* **画布倾斜 (Canvas Skewing)：** 在 X 轴上对文本进行轻微的几何倾斜，破坏基于基线（Baseline）检测的简易 OCR 引擎的识别流程。
-* **对抗性噪声遮罩 (Noise Overlays)：** 采用 `SRC_ATOP` 混合模式在文本上叠加随机透明度的线条和噪点，干扰机器自动进行字符分割（Segmentation）。
-
-**现实局限性：** 该方案无法提供绝对的安全。现代多模态大模型（VLM）和经过特定训练的深度学习 OCR 管道依然能轻松读懂这些贴纸。本工具的核心目的在于提高大众化监控的运行成本（迫使对方下载体积更大的 WebP 图片并消耗大量 GPU 算力进行 OCR 分析），而非免疫针对性的监视。
-
----
+* **类型混淆：** 将字符串替换为 WebP 图像，使简单的文本爬虫抓取空值。
+* **坐标抖动：** 每次渲染时字形发生亚像素级微调。即使文本相同，生成的 WebP 哈希值 (SHA-256) 也完全不同。
+* **画布倾斜：** 在 X 轴上对文本进行几何倾斜，破坏基于基线检测的简易 OCR 引擎。
+* **对抗性噪声：** 使用 `SRC_ATOP` 在文本上叠加随机线条和噪点，干扰机器自动字符分割。
 
 ### 2. AyuVeil (辅助加固组件)
-AyuVeil 是一个客户端加固的辅助工具，通过方法 Hook（底层拦截）和 MTProto 请求过滤来限制客户端的隐私泄露与静默网络行为。
+通过方法 Hook 和 MTProto 请求过滤，限制客户端隐私泄露。
 
-#### 运行机制：
-* **解析隔离（防范零点击漏洞）：**
-  拦截 `MessageObject`、`ChatMessageCell`（`setMessageObject`）、`DownloadController` 和 `FileLoader` 等底层渲染方法。当收到来自非信任来源的非发送（接收）消息时，自动将 `media` 结构替换为空对象 `TLRPC$TL_messageMediaEmpty`，并清空 `reply_markup`（内联按钮）和 `entities`（格式化实体）。此举旨在减少客户端解析媒体文件和特殊格式时的潜在漏洞暴露面（Attack Surface）。
-* **切断 VoIP（防范 WebRTC IP 泄露）：**
-  在 `pre_request_hook` 中直接拦截并丢弃所有包含电话和通话签名的请求 (`phone.*` 和 `call.*`)。这将从 MTProto 协议层彻底禁用 VoIP 通话功能，从而完全规避通过 WebRTC 建立 P2P 连接时暴露真实 IP 的风险。同时，还会拦截 WebApp 初始化请求 (`getWebView` 和 `requestWebView`) 以及位置请求 (`getLocated`)，防止后台网页静默获取设备指纹。
-* **屏蔽遥测与日志：**
-  拦截并阻止客户端向服务器发送调试日志 (`saveAppLog`)、系统统计数据和后台联系人同步 (`importContacts`)。
-* **时间抖动队列（Queue Jittering）：**
-  将待发送的消息放入本地队列，自动微调并延迟 `scheduleDate` 参数。这会打乱消息发出的绝对时间，降低分析人员通过你的发言时间戳建立行为画像的精准度。
+* **解析隔离 (防零点击漏洞)：** 拦截渲染底层方法。当收到非信任消息时，强制将 `media` 替换为空对象，清空内联按钮和格式，减少潜在漏洞暴露面。
+* **切断 WebRTC：** 拦截所有通话签名请求 (`phone.*`)，规避 P2P 连接暴露真实 IP。
+* **隐秘内联查询：** 内联机器人 (如 `@pic`) 的请求会被本地拦截，直到你在文本末尾输入分号 (`;`) 才会发送给服务器，防止键盘记录。
+* **屏蔽遥测：** 阻止客户端向服务器发送调试日志和后台联系人同步。
+* **时间抖动：** 将待发消息放入队列并随机延迟，打乱绝对发言时间戳。
+
+### 3. Stealth Auto Delete (数据饥饿)
+静默的随机延迟删除队列。与官方自动删除不同，它根据聊天类型和载荷动态注入随机延迟。
+* **核心逻辑：** 爬虫通常需要轮询延迟以避免 API 限制。此工具旨在利用时间差，在爬虫抓取到数据前将其销毁。
+
+**注意 (API 限制)：** 把每条短文本都当成图片发送会增加 API 负载。频繁刷屏会导致账号触发临时限制 (Flood Wait)。请合并文本，减少发送频率。
 
 ---
 
 ## 🇮🇷 فارسی
 
 ### ۱. موتور اصلی: Sticker Engine
-این ماژول پیام‌های متنی ارسالی شما را به تصاویر استیکر شفاف با فرمت WebP تبدیل می‌کند. هدف اصلی این بخش، بالا بردن هزینه محاسباتی پایش اطلاعات برای سیستم‌های جمع‌آوری فله‌ای داده (مانند ابزارهای عمومی OSINT) است.
+این ماژول پیام‌های متنی شما را قبل از ارسال به تصاویر استیکر (WebP) تبدیل می‌کند. هدف، بالا بردن هزینه محاسباتی پایش اطلاعات برای سیستم‌های جمع‌آوری فله‌ای داده (ربات‌های جاسوسی تلگرامی) است.
 
 #### ویژگی‌های فنی:
-* **تغییر نوع داده:** جایگزینی داده‌های متنی با استیکرهای WebP جهت به خطا انداختن خزنده‌های متنی ساده.
-* **لرزش صدم پیکسلی (Jitter):** جابه‌جایی جزئی حروف و سایه‌ها در هر بار رندر برای تغییر بایت‌های تصویر خروجی و تولید هش فایل (SHA-256) متفاوت در هر ارسال.
-* **کج‌نمایی بوم (Skewing):** کج کردن متن با زاویه‌های تصادفی افقی برای ایجاد اختلال در سیستم‌های تراز افقی متون در OCRها.
-* **نویزگذاری روی حروف:** ترسیم خطوط و نقطه‌های تصادفی با شفافیت متغیر روی سطح حروف چت (با متد `SRC_ATOP`) برای ایجاد اختلال در بخش‌بندی تصاویر در موتورهای پردازش تصویر.
+* **تغییر نوع داده:** جایگزینی متن با عکس جهت دور زدن خزنده‌های دیتابیس‌های متنی.
+* **لرزش صدم پیکسلی (Jitter):** جابه‌جایی جزئی حروف در هر بار رندر. این کار باعث می‌شود حتی برای یک متن تکراری، هش فایل (SHA-256) متفاوتی تولید شود.
+* **کج‌نمایی بوم (Skewing):** کج کردن متن با زاویه‌های تصادفی برای ایجاد اختلال در موتورهای OCR ساده.
+* **نویزگذاری:** ترسیم خطوط تصادفی روی حروف (متد `SRC_ATOP`) برای ایجاد اختلال در بخش‌بندی کلمات توسط ماشین.
 
-**توجه واقعی:** این روش امنیت ۱۰۰٪ ایجاد نمی‌کند. ابزارهای هوش مصنوعی مالتی‌مودال جدید یا خزنده‌های مجهز به فیلترهای پیش‌پردازش تصویر با صرف هزینه محاسباتی و زمان بیشتر، همچنان قادر به خواندن این متون خواهند بود. این ابزار صرفاً پایش ارزان و فله‌ای را متوقف می‌کند.
+### ۲. ابزار کمکی: AyuVeil (سخت‌سازی کلاینت)
+مجموعه‌ای از هوک‌ها برای مسدودسازی نشت متادیتا و تلمتری در سطح کلاینت.
 
----
+* **ایزوله‌سازی پارسر تصاویر (ضد Zero-Click):** در پیام‌های دریافتی ناشناس، مقدار `media`، دکمه‌های شیشه‌ای و انتیتی‌ها پاکسازی می‌شوند تا کلاینت از پردازش متادیتای مخرب احتمالی در امان بماند.
+* **مسدودسازی نشت IP:** با مسدود کردن ریکوئست‌های تماس (`phone.*`)، سیگنال‌دهی WebRTC را متوقف می‌کند تا IP واقعی لو نرود.
+* **مخفی‌سازی اینلاین:** درخواست به ربات‌های اینلاین (مثل `@pic`) در پس‌زمینه مسدود است. برای ارسال درخواست، باید حتماً در انتهای متن خود از علامت نقطه‌ویرگول (`;`) استفاده کنید.
+* **ضد تلمتری:** درخواست‌های ارسال لاگ عیب‌یابی کلاینت و همگام‌سازی مخاطبان با سرور را فیلتر می‌کند.
+* **لرزش زمانی:** پیام‌ها با تاخیرهای تصادفی در زمان ارسال بازنویسی می‌شوند تا تشخیص الگوی آنلاین بودن شما سخت‌تر شود.
 
-### ۲. ابزار کمکی: AyuVeil (کاهش سطح آسیب‌پذیری و تلمتری)
-پلاگین **AyuVeil** یک ابزار آزمون سخت‌سازی کلاینت است که از طریق متد هوک‌ها و فیلتر کردن پکت‌های MTProto تلاش می‌کند برخی روزنه‌های نشت متادیتای سیستم را محدود کند.
+### ۳. ابزار کمکی: Stealth Auto Delete (ایجاد گرسنگی داده‌ای)
+یک صف‌بندی بی‌صدا برای حذف دوطرفه پیام‌ها. برخلاف تایمر پیش‌فرض تلگرام، این ابزار بر اساس نوع چت و نوع مدیا، تاخیرهای تصادفی و متغیری اعمال می‌کند.
+* **منطق کار:** ربات‌های اسکرپر برای جلوگیری از لیمیت شدن، با تاخیر دیتابیس را اسکن می‌کنند. این ابزار پیام را دقیقاً در بازه زمانیِ کوری اسکرپر (قبل از رسیدن نوبت اسکن) پاک می‌کند.
 
-#### عملکرد فنی سخت‌سازی:
-* **کنترل پارسر تصاویر (کاهش ریسک آسیب‌پذیری‌های بدون کلیک):**
-  با هوک کردن کلاس‌های `MessageObject`، `ChatMessageCell`، `DownloadController` و `FileLoader` در پیام‌های دریافتی ناشناس، مقدار `media` را خالی کرده و فیلدهای دکمه‌های شیشه‌ای و انتیتی‌ها را پاکسازی می‌کند تا کلاینت را از پارس کردن متادیتای مخرب احتمالی محافظت کند.
-* **محدودسازی نشت آی‌پی از طریق لایه VoIP:**
-  با رهگیری و مسدود کردن درخواست‌های دارای امضای تماس (`phone.*` و `call.*`)، سیگنال‌دهی WebRTC را در سطح پروتکل متوقف می‌کند تا شانس افشای IP واقعی در بسترهای همتا‌به‌همتا کاهش یابد. همچنین درخواست‌های باز شدن وب‌اپ‌ها (`getWebView` و `requestWebView`) و خدمات مکانی کلاینت بلاک می‌شوند.
-* **مسدودسازی گزارش‌های خطا و آمارها:**
-  درخواست‌های مربوط به ثبت و ارسال لاگ‌های عیب‌یابی کلاینت (`saveAppLog`) و همچنین همگام‌سازی ناخواسته دفترچه مخاطبان با سرور تلگرام را فیلتر می‌کند.
-* **صف‌بندی پیام‌ها با تاخیر تصادفی:**
-  پیام‌ها را با تاخیرهای تصادفی ریز (Jitter) در زمان ارسال بازنویسی می‌کند تا تشخیص الگوهای آنلاین بودن و رفتارهای زمانی شما برای ناظران سخت‌تر شود.
+**هشدار (محدودیت Flood Wait):** تبدیل هر پیام کوتاه به فایل رسانه‌ای، فشار بیشتری به سرور تلگرام می‌آورد. ارسال رگباری پیام‌ها باعث محدودیت موقت اکانت (Flood Wait) می‌شود. پیام‌های خود را طولانی‌تر و با تعداد دفعات کمتر ارسال کنید.
 
 ---
 
@@ -143,16 +142,10 @@ To prevent OS-level font fingerprinting, you must supply a custom TrueType Font 
    `Android/data/<your.client.package>/cache/`
 3. In the plugin settings, enter the exact filename of the font (e.g., `myfont.ttf`). Do not leave this field blank.
 
----
+### 2. Plugin Deployment / Как завести плагины / 插件部署 / فعال‌سازی
+**Prerequisites:** Before loading, make sure the Plugin Engine is active (exteraGram/AyuGram -> Settings -> Client Preferences -> Plugins).
 
-### 2. Plugin Deployment / Как завести плагины / 插件部署 / فعال‌سازی پلاگین‌ها
-
-#### Prerequisites / Предварительные требования / 前提条件 / پیش‌نیازها
-Before loading the files, make sure the Plugin Engine is active:
-* **exteraGram/AyuGram:** Go to Settings -> Client Preferences -> Plugins, and toggle the Plugin Engine ON. Enable developer/advanced settings if prompted.
-
-#### Deployment Steps / Шаги установки / 安装步骤 / مراحل نصب
-1. Download both plugin files (`sticker_engine.plugin` and `ayu_veil.plugin`).
-2. Send these files to your **Saved Messages** within the modded Telegram client.
+1. Download the plugin files (`sticker_engine.plugin`, `ayuveil.plugin`, and `auto_delete.plugin`).
+2. Send these files to your **Saved Messages**.
 3. Tap on each file inside the chat and select **Load/Install Plugin** from the context menu.
-4. Restart the client if required, then navigate to your client's plugin settings interface to customize parameters. Activate "Enable Sticker Generator" in Sticker Engine and configure the desired hardening rules in AyuVeil.
+4. Restart the client, navigate to your client's plugin settings, and activate/configure the desired hardening rules.
