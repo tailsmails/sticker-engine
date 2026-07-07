@@ -4,8 +4,8 @@ __description__ = "Chronological queue with ghost reply bypass, stealth commands
 __author__ = "nobody :-)"
 __version__ = "2.5.0"
 __icon__ = "exteraPlugins/1"
-__app_version__ = ">=0.0.0"
-__sdk_version__ = ">=1.4.3.10"
+__app_version__ = ">=0.0.0.0"
+__sdk_version__ = ">=0.0.0.0"
 
 from typing import Any, List
 import time
@@ -59,8 +59,8 @@ def save_data_to_file(data):
         pass
 
 class PresentFragmentHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -85,8 +85,8 @@ class PresentFragmentHook(MethodHook):
             pass
 
 class GetChatHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -107,8 +107,8 @@ class GetChatHook(MethodHook):
             pass
 
 class GetChatFullHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -135,8 +135,8 @@ class GetChatFullHook(MethodHook):
             pass
 
 class AnalysisRequestDelegate(dynamic_proxy(RequestDelegate)):
-    def __init__(self, plugin, account, peer, invite_hash):
-        super().__init__()
+    def init(self, plugin, account, peer, invite_hash):
+        super().init()
         self.plugin = plugin
         self.account = account
         self.peer = peer
@@ -154,8 +154,8 @@ class AnalysisRequestDelegate(dynamic_proxy(RequestDelegate)):
             pass
 
 class FileLoaderHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -206,8 +206,8 @@ class FileLoaderHook(MethodHook):
             pass
 
 class DownloadControllerHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -231,8 +231,8 @@ class DownloadControllerHook(MethodHook):
             pass
 
 class AnimatedEmojiSpanHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -252,8 +252,8 @@ class AnimatedEmojiSpanHook(MethodHook):
             pass
 
 class MessageObjectHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -291,8 +291,8 @@ class MessageObjectHook(MethodHook):
             pass
 
 class ChatMessageCellHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -333,8 +333,8 @@ class ChatMessageCellHook(MethodHook):
             pass
 
 class InetAddressHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -350,8 +350,8 @@ class InetAddressHook(MethodHook):
             pass
 
 class SocketConnectHook(MethodHook):
-    def __init__(self, plugin):
-        super().__init__()
+    def init(self, plugin):
+        super().init()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -407,12 +407,12 @@ class AyuPlusPlugin(BasePlugin):
             pass
         try:
             AnimatedEmojiSpan = jclass("org.telegram.ui.Components.AnimatedEmojiSpan")
-            self.hook_all_methods(AnimatedEmojiSpan, "<init>", AnimatedEmojiSpanHook(self))
+            self.hook_all_methods(AnimatedEmojiSpan, "", AnimatedEmojiSpanHook(self))
         except Exception:
             pass
         try:
             MessageObject = jclass("org.telegram.messenger.MessageObject")
-            self.hook_all_methods(MessageObject, "<init>", MessageObjectHook(self))
+            self.hook_all_methods(MessageObject, "", MessageObjectHook(self))
         except Exception:
             pass
         try:
@@ -431,7 +431,7 @@ class AyuPlusPlugin(BasePlugin):
             self.hook_all_methods(Socket, "connect", SocketConnectHook(self))
         except Exception:
             pass
-        
+
         self.add_hook("TL_channels_joinChannel")
         self.add_hook("TL_channels_leaveChannel")
         self.add_hook("TL_messages_setTyping")
@@ -447,9 +447,8 @@ class AyuPlusPlugin(BasePlugin):
         self.add_hook("TL_messages_sendMultiMedia")
         self.add_hook("TL_messages_forwardMessages")
         self.add_hook("TL_messages_sendInlineBotResult")
-        
         self.add_hook("getWebPage", match_substring=True)
-        
+
         run_on_ui_thread(self.initialize_restoration, 3000)
 
     def initialize_restoration(self):
@@ -673,11 +672,11 @@ class AyuPlusPlugin(BasePlugin):
         try:
             whitelist_raw = self.get_setting("firewall_whitelist", "telegram.org, telegram.dog, telegram.me, t.me, stel.com, tg.dev, tx.me, 149.154., 91.108., 95.161.")
             whitelist = [item.strip().lower() for item in whitelist_raw.split(",") if item.strip()]
-            
+
             host = host.lower().strip()
             if host in ["localhost", "127.0.0.1", "::1"]:
                 return True
-                
+
             for pattern in whitelist:
                 if pattern in host:
                     return True
@@ -718,7 +717,7 @@ class AyuPlusPlugin(BasePlugin):
             jitter_max = self.get_setting_int("jitter_max", 60)
             if jitter_max > jitter_min:
                 delay += random.randint(jitter_min, jitter_max)
-                
+
         return delay
 
     def get_current_chat_id_and_type(self, account: int) -> tuple:
@@ -750,7 +749,7 @@ class AyuPlusPlugin(BasePlugin):
                                     enc_id = args.getInt("enc_id", 0)
                                     if enc_id != 0:
                                         return int(enc_id), False
-                                break
+                                    break
         except Exception:
             pass
         return 0, False
@@ -761,11 +760,11 @@ class AyuPlusPlugin(BasePlugin):
             peer = getattr(params, "peer", None)
             if msg and msg.startswith(".ganal "):
                 link_or_hash = msg[7:].strip()
-                hash_match = re.search(r"(?:joinchat/|\+|invite=)([a-zA-Z0-9_\-]+)", link_or_hash)
+                hash_match = re.search(r"(?:joinchat/|\+|invite=)([a-zA-Z0-9_-]+)", link_or_hash)
                 invite_hash = hash_match.group(1) if hash_match else link_or_hash
                 if invite_hash:
                     self.run_stealth_analysis(account, peer, invite_hash)
-                    return HookResult(strategy=HookStrategy.CANCEL)
+                return HookResult(strategy=HookStrategy.CANCEL)
         except Exception:
             pass
 
@@ -1021,7 +1020,7 @@ class AyuPlusPlugin(BasePlugin):
             if target_field is not None:
                 val = getattr(request, target_field, 0)
                 sched_date = int(val) if val is not None else 0
-                
+
                 conn_manager = ConnectionsManager.getInstance(account)
                 server_time = conn_manager.getCurrentTime()
                 local_time = int(time.time())
@@ -1030,29 +1029,65 @@ class AyuPlusPlugin(BasePlugin):
                 now = max(server_time, local_time)
 
                 if sched_date > 0:
-                    safety_threshold = now + 15
-                    if sched_date < safety_threshold:
-                        setattr(request, target_field, safety_threshold)
+                    diff = sched_date - now
+                    is_our_regular = (380 * 86400 <= diff <= 401 * 86400)
+                    is_our_long = (402 * 86400 <= diff <= 411 * 86400)
+
+                    if is_our_regular or is_our_long:
+                        if is_our_long:
+                            min_hours = self.get_setting_int("long_delay_min", 4)
+                            max_hours = self.get_setting_int("long_delay_max", 24)
+                            if min_hours < 1: min_hours = 1
+                            if max_hours < min_hours: max_hours = min_hours + 1
+
+                            random_hours = random.uniform(min_hours, max_hours)
+                            target_delay = int(random_hours * 3600)
+
+                            calculated_schedule = now + target_delay
+                            adjusted_schedule = self.adjust_to_active_hours(calculated_schedule)
+                            final_schedule = int(adjusted_schedule)
+                        else:
+                            final_delay = self.get_calculated_delay(account, request_name)
+                            slow_mode_delay = self.get_slow_mode_seconds(account, getattr(request, "peer", None))
+                            final_delay = max(final_delay, slow_mode_delay)
+
+                            if not hasattr(self, "last_scheduled_time"):
+                                self.last_scheduled_time = {}
+                            if account not in self.last_scheduled_time:
+                                self.last_scheduled_time[account] = 0
+
+                            calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
+                            self.last_scheduled_time[account] = calculated_schedule
+                            final_schedule = int(calculated_schedule)
+
+                        setattr(request, target_field, final_schedule)
                         if hasattr(request, "flags"):
                             request.flags = int(request.flags) | 1024
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
+                    else:
+                        safety_threshold = now + 15
+                        if sched_date < safety_threshold:
+                            setattr(request, target_field, safety_threshold)
+                            if hasattr(request, "flags"):
+                                request.flags = int(request.flags) | 1024
+                            return HookResult(strategy=HookStrategy.MODIFY, request=request)
                 else:
                     if self.get_setting("enable_queue", True):
                         final_delay = self.get_calculated_delay(account, request_name)
-                        
+
                         if not hasattr(self, "last_scheduled_time"):
                             self.last_scheduled_time = {}
                         if account not in self.last_scheduled_time:
                             self.last_scheduled_time[account] = 0
-                        
+
                         calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
                         self.last_scheduled_time[account] = calculated_schedule
-                        
+
                         setattr(request, target_field, int(calculated_schedule))
-                        
+
                         if hasattr(request, "flags"):
                             request.flags = int(request.flags) | 1024
-                            
+
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
         except Exception:
             pass
@@ -1075,7 +1110,7 @@ class AyuPlusPlugin(BasePlugin):
             if self.get_setting("strict_location_block", True):
                 self.show_toast("Location query blocked!")
                 return HookResult(strategy=HookStrategy.CANCEL)
-        
+
         if "getWebPagePreview" in request_name or "getWebPage" in request_name:
             if self.get_setting("strict_preview_block", True):
                 return HookResult(strategy=HookStrategy.CANCEL)
@@ -1196,9 +1231,9 @@ class AyuPlusPlugin(BasePlugin):
                     leaving_set = self.ghost_leaving_channels[account]
                     if leaving_set:
                         leaving_set.clear()
-                        fake_updates = self.create_fake_updates()
-                        if fake_updates is not None:
-                            return HookResult(strategy=HookStrategy.MODIFY_FINAL, response=fake_updates)
+                    fake_updates = self.create_fake_updates()
+                    if fake_updates is not None:
+                        return HookResult(strategy=HookStrategy.MODIFY_FINAL, response=fake_updates)
             except Exception:
                 pass
         return HookResult()
@@ -1280,7 +1315,7 @@ class AyuPlusPlugin(BasePlugin):
             except Exception:
                 event.set()
         run_on_ui_thread(show)
-        
+
         completed = event.wait(timeout=5.0)
         if not completed:
             return True
@@ -1306,12 +1341,12 @@ class AyuPlusPlugin(BasePlugin):
     def adjust_to_active_hours(self, timestamp: int) -> int:
         start_h = self.get_setting_int("active_hours_start", 4)
         end_h = self.get_setting_int("active_hours_end", 22)
-        
+
         if start_h < 0 or start_h > 23: start_h = 4
         if end_h < 0 or end_h > 23: end_h = 22
-        
+
         dt = datetime.datetime.fromtimestamp(timestamp)
-        
+
         if start_h <= end_h:
             if not (start_h <= dt.hour < end_h):
                 if dt.hour >= end_h:
@@ -1322,7 +1357,7 @@ class AyuPlusPlugin(BasePlugin):
         else:
             if not (dt.hour >= start_h or dt.hour < end_h):
                 dt = dt.replace(hour=start_h, minute=random.randint(0, 59), second=random.randint(0, 59))
-                
+
         return int(dt.timestamp())
 
     def process_queue_loop(self, account: int):
@@ -1330,13 +1365,13 @@ class AyuPlusPlugin(BasePlugin):
             while True:
                 with self.queue_lock:
                     q_len = len(self.queues.get(account, []))
-                if q_len == 0:
-                    break
+                    if q_len == 0:
+                        break
 
                 conn_manager = ConnectionsManager.getInstance(account)
                 conn_state = conn_manager.getConnectionState()
                 was_unstable = (conn_state != 3)
-                
+
                 while conn_state != 3:
                     was_unstable = True
                     time.sleep(1.0)
@@ -1348,10 +1383,10 @@ class AyuPlusPlugin(BasePlugin):
                 with self.queue_lock:
                     msg = self.queues[account].pop(0)
                     has_backlog = len(self.queues.get(account, [])) > 0
-                
+
                 self.save_queue_to_disk_async(account)
                 peer = msg.get("peer")
-                
+
                 if self.get_setting("ghost_reply_fallback", True):
                     if peer is not None:
                         channel_id = self.get_channel_id_from_peer(peer)
@@ -1369,41 +1404,17 @@ class AyuPlusPlugin(BasePlugin):
                 if server_time < 1704067200:
                     server_time = local_time
                 now = max(server_time, local_time)
-
+                
                 if is_long:
-                    min_hours = self.get_setting_int("long_delay_min", 4)
-                    max_hours = self.get_setting_int("long_delay_max", 24)
-                    if min_hours < 1: min_hours = 1
-                    if max_hours < min_hours: max_hours = min_hours + 1
-                    
-                    random_hours = random.uniform(min_hours, max_hours)
-                    target_delay = int(random_hours * 3600)
-                    
-                    calculated_schedule = now + target_delay
-                    adjusted_schedule = self.adjust_to_active_hours(calculated_schedule)
-                    msg["scheduleDate"] = int(adjusted_schedule)
+                    msg["scheduleDate"] = int(now + 410 * 86400)
                 else:
-                    request_name = "TL_messages_sendMedia" if is_media else "TL_messages_sendMessage"
-                    final_delay = self.get_calculated_delay(account, request_name)
-
-                    slow_mode_delay = self.get_slow_mode_seconds(account, peer)
-                    final_delay = max(final_delay, slow_mode_delay)
-
-                    if not hasattr(self, "last_scheduled_time"):
-                        self.last_scheduled_time = {}
-                    if account not in self.last_scheduled_time:
-                        self.last_scheduled_time[account] = 0
-
-                    calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
-                    self.last_scheduled_time[account] = calculated_schedule
-
-                    msg["scheduleDate"] = int(calculated_schedule)
+                    msg["scheduleDate"] = int(now + 400 * 86400)
 
                 try:
                     always_silent = self.get_setting("always_silent", True)
                 except (ValueError, TypeError):
                     always_silent = True
-                
+
                 msg["notify"] = not always_silent
 
                 send_message(msg)
@@ -1435,33 +1446,33 @@ class AyuPlusPlugin(BasePlugin):
         try:
             with self.queue_lock:
                 queue_list = list(self.queues.get(account, []))
-            serializable_list = []
-            for msg in queue_list:
-                peer = msg.get("peer")
-                peer_id = self.get_channel_id_from_peer(peer)
-                peer_type = "channel"
-                if peer is not None:
-                    cls_name = peer.getClass().getSimpleName()
-                    if "User" in cls_name:
-                        peer_type = "user"
-                    elif "Chat" in cls_name:
-                        peer_type = "chat"
-                reply_to_id = 0
-                reply_to = msg.get("replyToMsg")
-                if reply_to is not None:
-                    reply_to_id = getattr(reply_to, "id", 0)
-                serializable_list.append({
-                    "peer_id": peer_id,
-                    "peer_type": peer_type,
-                    "message": msg.get("message"),
-                    "caption": msg.get("caption"),
-                    "path": msg.get("path"),
-                    "reply_to_msg_id": reply_to_id,
-                    "is_long_delay": msg.get("is_long_delay", False),
-                })
-            data = load_saved_data()
-            data[f"persisted_q_{account}"] = serializable_list
-            save_data_to_file(data)
+                serializable_list = []
+                for msg in queue_list:
+                    peer = msg.get("peer")
+                    peer_id = self.get_channel_id_from_peer(peer)
+                    peer_type = "channel"
+                    if peer is not None:
+                        cls_name = peer.getClass().getSimpleName()
+                        if "User" in cls_name:
+                            peer_type = "user"
+                        elif "Chat" in cls_name:
+                            peer_type = "chat"
+                    reply_to_id = 0
+                    reply_to = msg.get("replyToMsg")
+                    if reply_to is not None:
+                        reply_to_id = getattr(reply_to, "id", 0)
+                    serializable_list.append({
+                        "peer_id": peer_id,
+                        "peer_type": peer_type,
+                        "message": msg.get("message"),
+                        "caption": msg.get("caption"),
+                        "path": msg.get("path"),
+                        "reply_to_msg_id": reply_to_id,
+                        "is_long_delay": msg.get("is_long_delay", False),
+                    })
+                data = load_saved_data()
+                data[f"persisted_q_{account}"] = serializable_list
+                save_data_to_file(data)
         except Exception:
             pass
 
@@ -1513,7 +1524,7 @@ class AyuPlusPlugin(BasePlugin):
                         self.processing[account] = False
                         self.last_scheduled_time[account] = 0
                     self.queues[account].extend(restored)
-                self.trigger_processor(account)
+                    self.trigger_processor(account)
         except Exception:
             pass
 
@@ -1552,7 +1563,7 @@ class AyuPlusPlugin(BasePlugin):
         if channel_id not in chats:
             chats.append(channel_id)
             self.save_ghost_chats(account, chats)
-        run_on_ui_thread(lambda: self.inject_dialog_ui(account, channel_id))
+            run_on_ui_thread(lambda: self.inject_dialog_ui(account, channel_id))
 
     def add_ghost_linked_chat(self, account: int, parent_chat_id: int, linked_chat_id: int):
         chats = self.get_ghost_linked_chats(account)
@@ -1565,7 +1576,7 @@ class AyuPlusPlugin(BasePlugin):
         if channel_id in chats:
             chats.remove(channel_id)
             self.save_ghost_chats(account, chats)
-        run_on_ui_thread(lambda: self.remove_dialog_ui(account, channel_id))
+            run_on_ui_thread(lambda: self.remove_dialog_ui(account, channel_id))
 
     def get_channel_id_from_peer(self, peer: Any) -> int:
         if peer is None:
