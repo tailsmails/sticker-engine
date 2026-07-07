@@ -145,7 +145,7 @@ To prevent OS-level font fingerprinting, you must supply a custom TrueType Font 
 ### 2. Plugin Deployment / Как завести плагины / 插件部署 / فعال‌سازی
 **Prerequisites:** Before loading, make sure the Plugin Engine is active (exteraGram/AyuGram -> Settings -> Client Preferences -> Plugins).
 
-1. Download the plugin files (`sticker_engine.plugin`, `ayuveil.plugin`, and `auto_delete.plugin`).
+1. Download the plugin files (`sticker_engine.plugin`, `ayu_veil.plugin`, and `auto_delete.plugin`).
 2. Send these files to your **Saved Messages**.
 3. Tap on each file inside the chat and select **Load/Install Plugin** from the context menu.
 4. Restart the client, navigate to your client's plugin settings, and activate/configure the desired hardening rules.
