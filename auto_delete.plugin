@@ -2,7 +2,7 @@ __id__ = "auto_delete"
 __name__ = "Auto Delete"
 __description__ = "Silent self-destruct mechanism with smart delays, file categorization, and nodel commands."
 __author__ = "nobody :-)"
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 __icon__ = "exteraPlugins/1"
 __min_version__ = "11.12.0"
 
@@ -24,6 +24,7 @@ class StealthAutoDelete(BasePlugin):
     def on_plugin_load(self):
         self._lock = threading.Lock()
         self._timers = {}
+        self._scheduled_media_types = {}
         try:
             from org.telegram.messenger import ApplicationLoader
             files_dir = ApplicationLoader.applicationContext.getFilesDir().getAbsolutePath()
@@ -40,6 +41,7 @@ class StealthAutoDelete(BasePlugin):
         self.add_hook("TL_messages_sendMultiMedia")
         self.add_hook("TL_updateNewMessage")
         self.add_hook("TL_updateNewChannelMessage")
+        self.add_hook("TL_updateDeleteScheduledMessages")
 
     def on_plugin_unload(self):
         for t in list(self._timers.values()):
@@ -133,21 +135,27 @@ class StealthAutoDelete(BasePlugin):
             m_type = media.__class__.__name__
             if "Photo" in m_type:
                 return "photo"
+            elif "Sticker" in m_type:
+                return "sticker"
             elif "Document" in m_type:
                 doc = getattr(media, "document", None)
                 if doc is not None:
                     attrs = getattr(doc, "attributes", None)
                     if attrs is not None:
-                        for i in range(attrs.size()):
-                            attr = attrs.get(i)
+                        is_java = hasattr(attrs, "size")
+                        size = attrs.size() if is_java else len(attrs)
+                        for i in range(size):
+                            attr = attrs.get(i) if is_java else attrs[i]
                             attr_type = attr.__class__.__name__
                             if "Audio" in attr_type:
                                 return "voice"
                             elif "Video" in attr_type:
                                 return "video"
+                            elif "Sticker" in attr_type:
+                                return "sticker"
                 return "file"
-        except Exception:
-            pass
+        except Exception as e:
+            self.log(f"Error in _get_media_type: {e}")
         return "text"
 
     def _get_delay_seconds_for_type(self, chat_type: str, media_type: str) -> int:
@@ -198,6 +206,10 @@ class StealthAutoDelete(BasePlugin):
 
             for i in range(msgs.size()):
                 upd = msgs.get(i)
+                upd_type = upd.__class__.__name__
+                
+                is_scheduled = "Scheduled" in upd_type
+
                 msg = getattr(upd, "message", None)
                 if msg is None:
                     continue
@@ -218,9 +230,13 @@ class StealthAutoDelete(BasePlugin):
 
                 if msg_id and dialog_id:
                     media_type = self._get_media_type(msg)
-                    delay = self._get_delay_seconds_for_type(chat_type, media_type)
-                    delete_at = int(time.time()) + delay
-                    self._add_to_queue(msg_id, dialog_id, delete_at)
+                    if is_scheduled:
+                        self._scheduled_media_types[msg_id] = media_type
+                        self.log(f"Scheduled message detected (ID: {msg_id}). Saving media type '{media_type}' for release.")
+                    else:
+                        delay = self._get_delay_seconds_for_type(chat_type, media_type)
+                        delete_at = int(time.time()) + delay
+                        self._add_to_queue(msg_id, dialog_id, delete_at)
                     break
         except Exception as e:
             self.log(f"Error in post_request_hook: {e}")
@@ -228,16 +244,75 @@ class StealthAutoDelete(BasePlugin):
 
     def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
         try:
-            if update_name in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
-                if not self.get_setting("enabled", True):
+            if not self.get_setting("enabled", True):
+                return HookResult()
+                
+            if update_name == "TL_updateDeleteScheduledMessages":
+                peer = getattr(update, "peer", None)
+                if peer is None:
                     return HookResult()
 
+                dialog_id = 0
+                if hasattr(peer, "user_id"):
+                    dialog_id = int(getattr(peer, "user_id"))
+                elif hasattr(peer, "chat_id"):
+                    dialog_id = -int(getattr(peer, "chat_id"))
+                elif hasattr(peer, "channel_id"):
+                    dialog_id = -int(getattr(peer, "channel_id"))
+
+                if not dialog_id:
+                    return HookResult()
+
+                chat_type = "pv"
+                if hasattr(peer, "chat_id"):
+                    chat_type = "group"
+                elif hasattr(peer, "channel_id"):
+                    ch_id = int(getattr(peer, "channel_id"))
+                    try:
+                        chat = get_messages_controller().getChat(ch_id)
+                        if chat is not None:
+                            is_megagroup = getattr(chat, "megagroup", False)
+                            chat_type = "group" if is_megagroup else "channel"
+                    except Exception:
+                        chat_type = "group"
+
+                cfg_prefix = "pv" if chat_type == "pv" else ("gp" if chat_type == "group" else "ch")
+                if not self.get_setting(f"{cfg_prefix}_enabled", True):
+                    return HookResult()
+
+                messages = getattr(update, "messages", None)
+                sent_messages = getattr(update, "sent_messages", None)
+
+                if messages is not None and sent_messages is not None:
+                    is_java_msg = hasattr(messages, "size")
+                    is_java_sent = hasattr(sent_messages, "size")
+
+                    msg_size = messages.size() if is_java_msg else len(messages)
+                    sent_size = sent_messages.size() if is_java_sent else len(sent_messages)
+
+                    size = min(msg_size, sent_size)
+                    for i in range(size):
+                        sched_id = messages.get(i) if is_java_msg else messages[i]
+                        real_id = sent_messages.get(i) if is_java_sent else sent_messages[i]
+                        media_type = self._scheduled_media_types.pop(sched_id, "text")
+
+                        delay = self._get_delay_seconds_for_type(chat_type, media_type)
+                        delete_at = int(time.time()) + delay
+                        self._add_to_queue(real_id, dialog_id, delete_at)
+                        self.log(f"Scheduled message (ID: {sched_id}) sent successfully (Real ID: {real_id}). Deleting in {delay}s.")
+                return HookResult()
+                
+            elif update_name in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
                 msg = getattr(update, "message", None)
                 if msg is None:
                     return HookResult()
 
                 is_out = getattr(msg, "out", False)
                 if not is_out:
+                    return HookResult()
+                    
+                upd_type = update.__class__.__name__
+                if "Scheduled" in upd_type:
                     return HookResult()
 
                 text = str(getattr(msg, "message", "") or "")
@@ -304,6 +379,18 @@ class StealthAutoDelete(BasePlugin):
                 key="pv_text_jitter",
                 text="Text Jitter (seconds)",
                 subtext="Maximum extra delay variance for PV text messages.",
+                default="0"
+            ),
+            Input(
+                key="pv_sticker_base_delay",
+                text="Sticker Base Delay (seconds)",
+                subtext="Deletion delay for stickers in PV.",
+                default="30"
+            ),
+            Input(
+                key="pv_sticker_jitter",
+                text="Sticker Jitter (seconds)",
+                subtext="Maximum extra delay variance for PV stickers.",
                 default="0"
             ),
             Input(
@@ -376,6 +463,18 @@ class StealthAutoDelete(BasePlugin):
                 default="0"
             ),
             Input(
+                key="gp_sticker_base_delay",
+                text="Sticker Base Delay (seconds)",
+                subtext="Deletion delay for stickers in groups.",
+                default="30"
+            ),
+            Input(
+                key="gp_sticker_jitter",
+                text="Sticker Jitter (seconds)",
+                subtext="Maximum extra delay variance for group stickers.",
+                default="0"
+            ),
+            Input(
                 key="gp_photo_base_delay",
                 text="Photo Base Delay (seconds)",
                 subtext="Deletion delay for photos in groups.",
@@ -442,6 +541,18 @@ class StealthAutoDelete(BasePlugin):
                 key="ch_text_jitter",
                 text="Text Jitter (seconds)",
                 subtext="Maximum extra delay variance for channel text messages.",
+                default="0"
+            ),
+            Input(
+                key="ch_sticker_base_delay",
+                text="Sticker Base Delay (seconds)",
+                subtext="Deletion delay for stickers in channels.",
+                default="30"
+            ),
+            Input(
+                key="ch_sticker_jitter",
+                text="Sticker Jitter (seconds)",
+                subtext="Maximum extra delay variance for channel stickers.",
                 default="0"
             ),
             Input(
