@@ -332,6 +332,44 @@ class ChatMessageCellHook(MethodHook):
         except Exception:
             pass
 
+class InetAddressHook(MethodHook):
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            if not self.plugin.get_setting("enable_firewall", False):
+                return
+            host = param.args[0]
+            if host is None:
+                return
+            if not self.plugin.is_host_whitelisted(str(host)):
+                param.setThrowable(jclass("java.net.UnknownHostException")("Host blocked by AyuPlus Firewall"))
+        except Exception:
+            pass
+
+class SocketConnectHook(MethodHook):
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            if not self.plugin.get_setting("enable_firewall", False):
+                return
+            endpoint = param.args[0]
+            if endpoint is None:
+                return
+            address = endpoint.getAddress()
+            if address is not None:
+                ip = str(address.getHostAddress())
+                host = str(address.getHostName())
+                if not self.plugin.is_host_whitelisted(ip) and not self.plugin.is_host_whitelisted(host):
+                    param.setThrowable(jclass("java.io.IOException")("Connection blocked by AyuPlus Firewall"))
+        except Exception:
+            pass
+
 class AyuPlusPlugin(BasePlugin):
     def on_plugin_load(self):
         self.queues = {}
@@ -381,6 +419,17 @@ class AyuPlusPlugin(BasePlugin):
             self.hook_all_methods(ChatMessageCell, "setMessageObject", ChatMessageCellHook(self))
         except Exception:
             pass
+        try:
+            InetAddress = jclass("java.net.InetAddress")
+            self.hook_all_methods(InetAddress, "getAllByName", InetAddressHook(self))
+            self.hook_all_methods(InetAddress, "getByName", InetAddressHook(self))
+        except Exception:
+            pass
+        try:
+            Socket = jclass("java.net.Socket")
+            self.hook_all_methods(Socket, "connect", SocketConnectHook(self))
+        except Exception:
+            pass
         
         self.add_hook("TL_channels_joinChannel")
         self.add_hook("TL_channels_leaveChannel")
@@ -390,10 +439,13 @@ class AyuPlusPlugin(BasePlugin):
         self.add_hook("TL_messages_getBotCallbackAnswer")
         self.add_hook("getBotCallbackAnswer", match_substring=True)
         self.add_hook("TL_messages_sendMessage")
+        self.add_hook("TL_messages_editMessage")
         self.add_hook("TL_messages_sendMedia")
         self.add_hook("TL_messages_sendMultiMedia")
         self.add_hook("TL_messages_forwardMessages")
         self.add_hook("TL_messages_sendInlineBotResult")
+        
+        self.add_hook("getWebPage", match_substring=True)
         
         run_on_ui_thread(self.initialize_restoration, 3000)
 
@@ -581,6 +633,20 @@ class AyuPlusPlugin(BasePlugin):
                 subtext="Prevents the client from requesting preview metadata for links.",
                 icon="msg_open",
             ),
+            Switch(
+                key="enable_firewall",
+                text="Enable Connection Firewall",
+                default=False,
+                subtext="Blocks all outgoing non-Telegram JVM network connections to prevent telemetry, external tracking, and third-party media leaks.",
+                icon="msg_block",
+            ),
+            Input(
+                key="firewall_whitelist",
+                text="Firewall Whitelist (Domains/IPs)",
+                default="telegram.org, telegram.dog, telegram.me, t.me, stel.com, tg.dev, tx.me, 149.154., 91.108., 95.161.",
+                subtext="Comma-separated list of whitelisted domains or IP prefixes. Useful for MTProxy, proxies, or custom servers.",
+                icon="msg_permissions",
+            ),
         ]
 
     def get_setting_int(self, key: str, default_val: int) -> int:
@@ -592,6 +658,24 @@ class AyuPlusPlugin(BasePlugin):
             return int(float(val_str))
         except Exception:
             return default_val
+
+    def is_host_whitelisted(self, host: str) -> bool:
+        try:
+            whitelist_raw = self.get_setting("firewall_whitelist", "telegram.org, telegram.dog, telegram.me, t.me, stel.com, tg.dev, tx.me, 149.154., 91.108., 95.161.")
+            whitelist = [item.strip().lower() for item in whitelist_raw.split(",") if item.strip()]
+            
+            host = host.lower().strip()
+            if host in ["localhost", "127.0.0.1", "::1"]:
+                return True
+                
+            for pattern in whitelist:
+                if pattern in host:
+                    return True
+                if host.endswith("." + pattern) or host == pattern:
+                    return True
+            return False
+        except Exception:
+            return True
 
     def get_current_chat_id_and_type(self, account: int) -> tuple:
         try:
@@ -906,7 +990,7 @@ class AyuPlusPlugin(BasePlugin):
                     if sched_date < safety_threshold:
                         setattr(request, target_field, safety_threshold)
                         if hasattr(request, "flags"):
-                            request.flags |= 1024
+                            request.flags = int(request.flags) | 1024
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
                 else:
                     if self.get_setting("enable_queue", True):
@@ -925,7 +1009,7 @@ class AyuPlusPlugin(BasePlugin):
                         setattr(request, target_field, int(calculated_schedule))
                         
                         if hasattr(request, "flags"):
-                            request.flags |= 1024
+                            request.flags = int(request.flags) | 1024
                             
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
         except Exception:
@@ -949,9 +1033,37 @@ class AyuPlusPlugin(BasePlugin):
             if self.get_setting("strict_location_block", True):
                 self.show_toast("Location query blocked!")
                 return HookResult(strategy=HookStrategy.CANCEL)
+                
         if "getWebPagePreview" in request_name or "getWebPage" in request_name:
             if self.get_setting("strict_preview_block", True):
                 return HookResult(strategy=HookStrategy.CANCEL)
+                
+        if "sendMessage" in request_name or "editMessage" in request_name:
+            if self.get_setting("strict_preview_block", True):
+                try:
+                    modified = False
+                    if hasattr(request, "no_webpage"):
+                        request.no_webpage = True
+                        if hasattr(request, "flags"):
+                            request.flags = int(request.flags) | 2
+                        modified = True
+                    if hasattr(request, "link_preview_options"):
+                        try:
+                            TLRPC = jclass("org.telegram.tgnet.TLRPC")
+                            options = TLRPC.TL_inputLinkPreviewOptions()
+                            options.is_disabled = True
+                            options.flags = int(options.flags) | 1
+                            request.link_preview_options = options
+                            if hasattr(request, "flags"):
+                                request.flags = int(request.flags) | 131072
+                            modified = True
+                        except Exception:
+                            pass
+                    if modified:
+                        return HookResult(strategy=HookStrategy.MODIFY, request=request)
+                except Exception:
+                    pass
+
         if "payments" in request_name.lower() or "TL_payments" in request_name:
             if self.get_setting("strict_payment_block", True):
                 return HookResult(strategy=HookStrategy.CANCEL)
