@@ -1026,6 +1026,10 @@ class AyuPlusPlugin(BasePlugin):
                 
         if "setTyping" in request_name or "TL_messages_setTyping" in request_name:
             return HookResult(strategy=HookStrategy.CANCEL)
+            
+        send_requests = ["sendMessage", "sendMedia", "sendMultiMedia", "forwardMessages", "sendInlineBotResult"]
+        is_send_request = any(x in request_name for x in send_requests)
+        is_media_request = "sendMedia" in request_name or "sendMultiMedia" in request_name
 
         try:
             target_field = None
@@ -1033,6 +1037,10 @@ class AyuPlusPlugin(BasePlugin):
                 target_field = "schedule_date"
             elif hasattr(request, "scheduleDate"):
                 target_field = "scheduleDate"
+                
+            if is_send_request and target_field is None:
+                self.show_toast("Stealth Block: Sending request blocked due to missing scheduling structure!")
+                return HookResult(strategy=HookStrategy.CANCEL)
 
             if target_field is not None:
                 val = getattr(request, target_field, 0)
@@ -1056,7 +1064,12 @@ class AyuPlusPlugin(BasePlugin):
                 if server_time_calculated < 1704067200:
                     server_time_calculated = local_time
                     
-                now = max(server_time, server_time_calculated, local_time) + 5
+                now = max(server_time, server_time_calculated, local_time) + 10
+                if is_media_request:
+                    absolute_safety_floor = 180 if is_unstable else 120
+                else:
+                    absolute_safety_floor = 90 if is_unstable else 60
+                    
                 final_delay = self.get_calculated_delay(account, request_name)
                 ref_delay = final_delay
                 half_ref = ref_delay / 2.0
@@ -1065,7 +1078,6 @@ class AyuPlusPlugin(BasePlugin):
                     self.last_scheduled_time = {}
                 if account not in self.last_scheduled_time:
                     self.last_scheduled_time[account] = now
-                    
                 if self.last_scheduled_time[account] < now:
                     self.last_scheduled_time[account] = now
                 
@@ -1074,9 +1086,8 @@ class AyuPlusPlugin(BasePlugin):
                     final_delay = ref_delay + ref_delay
                     
                 if is_unstable:
-                    final_delay = max(final_delay, 120)
+                    final_delay = max(final_delay, 150)
                     
-                absolute_safety_floor = 30 if is_unstable else 25
                 final_delay = max(final_delay, absolute_safety_floor)
 
                 if sched_date > 0:
@@ -1113,7 +1124,7 @@ class AyuPlusPlugin(BasePlugin):
                             request.flags = int(request.flags) | 1024
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
                     else:
-                        safety_threshold = now + (120 if is_unstable else absolute_safety_floor)
+                        safety_threshold = now + absolute_safety_floor
                         if sched_date < safety_threshold:
                             setattr(request, target_field, safety_threshold)
                             if hasattr(request, "flags"):
@@ -1136,7 +1147,8 @@ class AyuPlusPlugin(BasePlugin):
 
                     return HookResult(strategy=HookStrategy.MODIFY, request=request)
         except Exception:
-            pass
+            if is_send_request:
+                return HookResult(strategy=HookStrategy.CANCEL)
 
         if ("phone" in request_name.lower() or "call" in request_name.lower()) and "callback" not in request_name.lower():
             if self.get_setting("strict_voip_block", True):
