@@ -435,6 +435,8 @@ class AyuPlusPlugin(BasePlugin):
         self.add_hook("TL_channels_joinChannel")
         self.add_hook("TL_channels_leaveChannel")
         self.add_hook("TL_messages_setTyping")
+        self.add_hook("TL_messages_saveDraft")
+        self.add_hook("saveDraft", match_substring=True)
         self.add_hook("TL_messages_getInlineBotResults")
         self.add_hook("getInlineBotResults", match_substring=True)
         self.add_hook("TL_messages_getBotCallbackAnswer")
@@ -606,6 +608,13 @@ class AyuPlusPlugin(BasePlugin):
                 icon="msg_permissions",
             ),
             Header(text="Network Privacy Settings"),
+            Switch(
+                key="local_drafts",
+                text="Local Drafts Only",
+                default=False,
+                subtext="Prevents incomplete messages (drafts) from being uploaded and synced to Telegram cloud servers.",
+                icon="msg_secret",
+            ),
             Switch(
                 key="strict_telemetry_block",
                 text="Block App Telemetry & Logs",
@@ -1117,6 +1126,17 @@ class AyuPlusPlugin(BasePlugin):
                 else:
                     self.log("Callback accepted and forwarded.")
                     return HookResult(strategy=HookStrategy.MODIFY, request=request)
+        if "saveDraft" in request_name or "TL_messages_saveDraft" in request_name:
+            if self.get_setting("local_drafts", False):
+                try:
+                    TLRPC = jclass("org.telegram.tgnet.TLRPC")
+                    fake_bool = TLRPC.TL_boolTrue()
+                except Exception:
+                    fake_bool = None
+                result = HookResult(strategy=HookStrategy.CANCEL)
+                if fake_bool is not None:
+                    result.response = fake_bool
+                return result
         if not self.get_setting("ghost_join", True):
             return HookResult()
         if request_name == "TL_channels_joinChannel":
