@@ -4,8 +4,8 @@ __description__ = "Converts outgoing text messages into clean transparent WebP s
 __author__ = "nobody :-)"
 __version__ = "3.8.0"
 __icon__ = "exteraPlugins/1"
-__app_version__ = ">=12.8.1"
-__sdk_version__ = ">=1.4.3.10"
+__app_version__ = ">=0.0.0.0"
+__sdk_version__ = ">=0.0.0.0"
 
 from typing import Any, List, Dict, Optional, Tuple
 import time
