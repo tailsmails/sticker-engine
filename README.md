@@ -143,7 +143,7 @@ To prevent OS-level font fingerprinting, you must supply a custom TrueType Font 
 3. In the plugin settings, enter the exact filename of the font (e.g., `myfont.ttf`). Do not leave this field blank.
 
 ### 2. Plugin Deployment / Как завести плагины / 插件部署 / فعال‌سازی
-**Prerequisites:** Before loading, make sure the Plugin Engine is active (exteraGram/AyuGram -> Settings -> Client Preferences -> Plugins).
+**Prerequisites:** Before loading, make sure the Plugin Engine is active (exteraGram/AyuGram -> Settings -> exteraGram Preferences -> Plugins).
 
 1. Download the plugin files (`sticker_engine.plugin`, `ayu_veil.plugin`, and `auto_delete.plugin`).
 2. Send these files to your **Saved Messages**.
