@@ -677,6 +677,41 @@ class AyuPlusPlugin(BasePlugin):
         except Exception:
             return True
 
+    def get_calculated_delay(self, account: int, request_name: str) -> int:
+        """Unified helper to calculate precise delay based on the request type and connection state"""
+        online_delay = self.get_setting_int("online_delay", 15)
+        offline_delay = self.get_setting_int("offline_delay", 60)
+        media_delay = self.get_setting_int("media_safety_delay", 300)
+
+        conn_manager = ConnectionsManager.getInstance(account)
+        conn_state = conn_manager.getConnectionState()
+        was_unstable = (conn_state != 3)
+
+        is_media = "sendMedia" in request_name or "sendMultiMedia" in request_name
+
+        if was_unstable:
+            base_delay = max(offline_delay, online_delay)
+        else:
+            base_delay = online_delay
+
+        if is_media:
+            delay = max(base_delay, media_delay)
+        else:
+            delay = base_delay
+
+        if was_unstable and delay < 30:
+            delay = 30
+        elif delay < 15:
+            delay = 15
+
+        if self.get_setting("enable_anti_fingerprint", True):
+            jitter_min = self.get_setting_int("jitter_min", 5)
+            jitter_max = self.get_setting_int("jitter_max", 60)
+            if jitter_max > jitter_min:
+                delay += random.randint(jitter_min, jitter_max)
+                
+        return delay
+
     def get_current_chat_id_and_type(self, account: int) -> tuple:
         try:
             Activity = jclass("org.telegram.messenger.AndroidUtilities").getCurrentActivity()
@@ -994,16 +1029,14 @@ class AyuPlusPlugin(BasePlugin):
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
                 else:
                     if self.get_setting("enable_queue", True):
-                        online_delay = self.get_setting_int("online_delay", 15)
-                        if online_delay < 15:
-                            online_delay = 15
+                        final_delay = self.get_calculated_delay(account, request_name)
                         
                         if not hasattr(self, "last_scheduled_time"):
                             self.last_scheduled_time = {}
                         if account not in self.last_scheduled_time:
                             self.last_scheduled_time[account] = 0
                         
-                        calculated_schedule = max(now + online_delay, self.last_scheduled_time[account] + online_delay)
+                        calculated_schedule = max(now + final_delay, self.last_scheduled_time[account] + final_delay)
                         self.last_scheduled_time[account] = calculated_schedule
                         
                         setattr(request, target_field, int(calculated_schedule))
@@ -1303,33 +1336,11 @@ class AyuPlusPlugin(BasePlugin):
                     adjusted_schedule = self.adjust_to_active_hours(calculated_schedule)
                     msg["scheduleDate"] = int(adjusted_schedule)
                 else:
-                    online_delay = self.get_setting_int("online_delay", 15)
-                    offline_delay = self.get_setting_int("offline_delay", 60)
-                    media_delay = self.get_setting_int("media_safety_delay", 300)
-
-                    if was_unstable or has_backlog:
-                        base_delay = max(offline_delay, online_delay)
-                    else:
-                        base_delay = online_delay
-
-                    if is_media:
-                        delay = max(base_delay, media_delay)
-                    else:
-                        delay = base_delay
-
-                    if was_unstable and delay < 30:
-                        delay = 30
-                    elif delay < 15:
-                        delay = 15
+                    request_name = "TL_messages_sendMedia" if is_media else "TL_messages_sendMessage"
+                    final_delay = self.get_calculated_delay(account, request_name)
 
                     slow_mode_delay = self.get_slow_mode_seconds(account, peer)
-                    final_delay = max(delay, slow_mode_delay)
-
-                    if self.get_setting("enable_anti_fingerprint", True):
-                        jitter_min = self.get_setting_int("jitter_min", 5)
-                        jitter_max = self.get_setting_int("jitter_max", 60)
-                        if jitter_max > jitter_min:
-                            final_delay += random.randint(jitter_min, jitter_max)
+                    final_delay = max(final_delay, slow_mode_delay)
 
                     if not hasattr(self, "last_scheduled_time"):
                         self.last_scheduled_time = {}
