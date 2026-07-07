@@ -4,8 +4,8 @@ __description__ = "Chronological queue with ghost reply bypass, stealth commands
 __author__ = "nobody :-)"
 __version__ = "2.5.0"
 __icon__ = "exteraPlugins/1"
-__app_version__ = ">=12.8.1"
-__sdk_version__ = ">=1.4.3.10"
+__app_version__ = ">=0.0.0.0"
+__sdk_version__ = ">=0.0.0.0"
 
 from typing import Any, List
 import time
