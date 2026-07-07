@@ -167,7 +167,7 @@ class FileLoaderHook(MethodHook):
                 return
 
             parent = None
-            for arg in arg:
+            for arg in args:
                 if arg is None:
                     continue
                 try:
