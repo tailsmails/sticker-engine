@@ -113,6 +113,6 @@ To prevent OS-level font fingerprinting, you must supply a custom TrueType Font 
 3. In the plugin settings, enter the exact filename of the font (e.g., `myfont.ttf`). Do not leave this field blank.
 
 ### 2. Plugin Deployment / Установка плагинов
-1. Download both Python plugin files (`sticker_engine.py` and `ayu_veil.py`).
+1. Download both Python plugin files (`sticker_engine.plugin` and `ayu_veil.plugin`).
 2. Upload the files to your saved messages inside modded Telegram client (e.g., exteraGram / AyuGram) and load them.
 3. Configure the settings for both plugins as desired. Turn on the "Enable Sticker Generator" in Sticker Engine settings and activate the hardening rules in AyuVeil.
