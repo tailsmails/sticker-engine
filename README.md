@@ -1,71 +1,105 @@
-# Sticker Engine
+# Sticker Engine & AyuVeil
 
-An exteraGram plugin that converts outgoing text messages into transparent WebP stickers with adversarial noise to disrupt mass data harvesting, OCR, and OSINT databases.
+A privacy-conscious, client-hardening experiment for modded Telegram clients (exteraGram/AyuGram).
+
+*   **Sticker Engine (Core Component):** An experimental text-to-image WebP renderer designed to raise the computational barrier for automated text scrapers.
+*   **AyuVeil (Auxiliary Tool):** A collection of API hooks and filters aimed at reducing some common client-side metadata leaks and telemetry.
 
 ---
 
-## 🇷🇺 Русский (Основное описание)
+## LIMITATIONS & REALISTIC THREAT MODEL (MUST READ)
+**This software does not offer absolute privacy or untraceable communication.** 
 
-**Anti-OSINT Sticker Engine** - это плагин для exteraGram, который автоматически преобразует ваши исходящие текстовые сообщения в прозрачные стикеры формата WebP, применяя состязательное зашумление (adversarial noise) и микроискажения. Проект разработан для защиты приватности и противодействия массовому нецелевому парсингу чатов ботами автоматического сбора данных (такими как Funstat, Telelog, Глаз Бога и другие OSINT-системы).
+1.  **AI & Advanced OCR Bypass:** While the added noise and geometric distortion disrupt basic, automated OCR engines (like older Tesseract setups), they **do not** stop modern multimodal AI models (such as GPT-4o, Claude, or custom deep-learning pipelines). An adversary with sufficient GPU resources and budget can easily clean the noise and read the stickers.
+2.  **Increased Cost, Not Immunity:** The primary goal of the Sticker Engine is economic: it forces scrapers to download larger media files (WebP vs. plain text) and spend CPU/GPU cycles on OCR instead of reading database strings. It makes mass, automated harvesting more expensive, but a targeted or well-funded observer will bypass this easily.
+3.  **Fragility of Client Hooks:** AyuVeil relies on low-level Java method hooking. Any major update to the Telegram codebase may break these hooks silently, potentially re-enabling telemetry, VoIP, or WebApp loads without warning.
+4.  **No Protection Against Device Compromise:** If your operating system is compromised (via keyloggers, screen scraping, or spyware), client-side modifications are completely ineffective.
 
-### Как это работает (Техническая часть)
-Плагин перехватывает исходящий текст на стороне клиента и рендерит его на графическом холсте (Canvas) в среде Java/Android, внедряя несколько уровней защиты:
-1. **Обход парсеров текста:** Вместо текстового типа данных отправляется объект медиа (стикер). Простые парсеры баз данных упираются в пустые значения.
-2. **Микросдвиги (Micro-jitter):** Координаты символов и теней сдвигаются на случайные доли пикселя при каждом рендере. Это заставляет алгоритмы сглаживания (anti-aliasing) видеокарты генерировать уникальные граничные пиксели для каждого кадра, ломая классическое сравнение хэшей изображений.
-3. **Искажение геометрии (Canvas Skewing):** Холст слегка наклоняется по оси X на случайный угол. Это ломает детекцию базовой линии (baseline) в нейросетях OCR.
-4. **Состязательное зашумление (Adversarial Noise):** С помощью наложения маски `SRC_ATOP` на буквы наносятся случайные линии и точки разной прозрачности. Это не мешает человеческому глазу распознавать текст (благодаря гештальт-восприятию), но полностью ломает бинаризацию и сегментацию символов в системах распознавания текста (Tesseract, EasyOCR и др.).
-5. **Динамическое сжатие:** Качество кодирования WebP колеблется в диапазоне 76-84%, гарантируя уникальный хэш файла (SHA-256) для каждого отправленного сообщения.
+---
 
-### Дисклеймер и модель угроз
-**Важно:** Этот инструмент разработан исключительно для защиты от **массового, автоматизированного и нецелевого сбора информации** (mass dragnet surveillance).
-* **Целевые атаки:** Если вы являетесь объектом индивидуальной целевой разработки со стороны спецслужб или высококвалифицированных хакеров (APT), этот плагин вас не спасет. 
-* В случае направленной атаки злоумышленники могут использовать кейлоггеры на устройстве, перехват скриншотов экрана (screen scraping) или уязвимости нулевого дня в ОС.
-* Инструмент предназначен для повышения общего уровня цифровой гигиены в публичных чатах.
+## 🇷🇺 Русский (Native Technical & Realistic Style)
+
+### 1. Sticker Engine (Основной модуль)
+**Sticker Engine** перехватывает исходящие текстовые сообщения на этапе отправки и рендерит их в прозрачные стикеры формата WebP, добавляя контролируемые геометрические искажения и искусственный шум. 
+
+Инструмент создавался как эксперимент по увеличению стоимости массового автоматического сбора данных (dragnet surveillance). Он не скрывает факт общения, но усложняет парсинг текста ботами-агрегаторами (такими как Глаз Бога, Telelog и др.).
+
+#### Как это работает на техническом уровне:
+* **Замена типа данных:** Вместо строки передается медиа-объект. Простые логгеры, собирающие только текстовое поле сообщений, упираются в пустые значения.
+* **Микро-сдвиги рендеринга (Jitter):** Координаты глифов и теней смещаются на случайные доли пикселя при каждом вызове. Алгоритмы сглаживания (anti-aliasing) формируют уникальные граничные пиксели, что изменяет итоговый хэш файла (SHA-256) при повторной отправке одного и того же текста.
+* **Искажение геометрии холста:** Слегка наклоняет векторную сетку по оси X, что снижает эффективность алгоритмов поиска базовой линии (baseline detection) в простых OCR-системах.
+* **Искусственные помехи:** Через маску смешивания `SRC_ATOP` поверх текста накладываются линии и точки случайной прозрачности. Это ухудшает автоматическую сегментацию символов.
+
+**Ограничение метода:** Современные мультимодальные нейросети (VLM) и продвинутые конвейеры обработки изображений способны распознать этот текст. Использование стикеров лишь заставляет наблюдателя тратить больше трафика (скачивание WebP вместо текста) и вычислительных мощностей GPU на OCR-анализ.
+
+---
+
+### 2. AyuVeil (Вспомогательный модуль харднинга)
+**AyuVeil** (ранее AyuPlus) - это экспериментальный набор низкоуровневых правил для ужесточения (hardening) конфигурации клиента. Он работает через перехват внутренних методов и фильтрацию некоторых запросов API.
+
+#### Основные механизмы:
+* **Попытка фильтрации входящих структур (Защита от Zero-Click):**
+  Через хуки классов `MessageObject`, `ChatMessageCell` (`setMessageObject`), `DownloadController` и `FileLoader` плагин заменяет структуру `message.media` на пустой объект `TLRPC$TL_messageMediaEmpty` для входящих сообщений от недоверенных источников, а также очищает списки `reply_markup` и `entities`. Это снижает вероятность срабатывания уязвимостей парсинга медиа-библиотек внутри клиента.
+* **Снижение вероятности утечки IP через WebRTC:**
+  В `pre_request_hook` блокируются запросы с сигнатурами телефонии (`phone.*`, `call.*`). Это отключает протокол VoIP на уровне MTProto, минимизируя риск раскрытия реального IP-адреса через P2P-соединения. Также блокируются запросы WebView (`getWebView`, `requestWebView`) и запросы геопозиции (`getLocated`).
+* **Подавление встроенной телеметрии:**
+  Перехватывает и отклоняет отправку отладочных логов (`saveAppLog`), системной статистики и фоновую синхронизацию списка контактов (`importContacts`).
+* **Очередь с микро-задержками (Jitter):**
+  Сохраняет сообщения во внутренний JSON-стек и отправляет их с задержкой, пересчитывая `scheduleDate` с добавлением случайного смещения. Это затрудняет статистический анализ времени вашей активности.
 
 ---
 
 ## 🇬🇧 English
 
-This plugin intercepts outgoing text and renders it onto a WebP vector canvas using adversarial perturbations.
+### 1. Sticker Engine (Core Module)
+This module intercepts outgoing text and renders it to a transparent WebP image. It raises the technical and financial costs of mass data harvesting by converting indexable plain text into media files.
 
-### Core Features
-* **Anti-Scraping:** Converts plaintext to sticker media, bypassing raw string loggers.
-* **Adversarial Perturbation:** Introduces randomized lines and salt-and-pepper noise clipped directly to the text bounds (`SRC_ATOP`).
-* **Geometric Distortion:** Randomly skews the canvas and applies sub-pixel coordinate jitter, breaking baseline detection in standard neural network OCR models.
-* **Entropy Generation:** Randomizes WebP compression quality between 76% and 84% to ensure every message has a unique file hash.
-
-### Threat Model & Disclaimer
-This tool is meant to protect against **mass, indiscriminate data harvesting** (e.g., OSINT databases and automated scrapers). It does **not** protect against targeted surveillance. If you are specifically targeted by highly funded adversaries or state-level threat actors, they can bypass this technique using OS-level keyloggers, screen capturing, or device-level compromises.
+#### Key Features:
+* **Type Obfuscation:** Replaces string payloads with WebP image data to bypass simple text scrapers.
+* **Coordinate Jitter:** Offsets text rendering at sub-pixel levels to force unique anti-aliasing outputs, ensuring different SHA-256 hashes even for identical messages.
+* **Canvas Skewing:** Skews the text on the X-axis to disrupt basic baseline-based OCR readers.
+* **Adversarial Noise Overlays:** Uses `SRC_ATOP` blending to overlay random lines and dots over text bounds, disrupting machine-driven character segmentation.
 
 ---
 
-## 🇨🇳 简体中文
+### 2. AyuVeil (Auxiliary Hardening Component)
+AyuVeil is a companion component that uses method hooks and MTProto request filtering to limit client telemetry and mitigate certain attack vectors.
 
-本插件通过将文本转换为带有对抗性扰动的透明 WebP 贴纸，来干扰大规模数据抓取和自动化 OCR 识别。
-
-### 核心功能
-* **防原始文本爬取**：将文本转换为媒体贴纸，使常规文本收集机器人无法直接提取文本。
-* **对抗性噪点**：在字符表面混合随机的透明线条与噪点（基于 `SRC_ATOP`），人类肉眼易读，但能有效干扰 OCR（如 Tesseract、EasyOCR 等）的字符分割与识别。
-* **几何微调**：对画布进行随机微小倾斜（Skew），并对字符坐标进行亚像素级的抖动，破坏 OCR 神经网络对基准线（Baseline）的定位。
-* **文件哈希混淆**：动态调整 WebP 压缩质量（76%-84%），确保每次发送相同文字产生的二进制文件和 SHA-256 哈希完全不同。
-
-### 威胁模型与免责声明
-本工具仅用于防御**大规模、无差别的自动化数据收集**（例如各类 OSINT 数据库和社工库）。它**无法**防御针对个人的定向监控。如果面临国家级或拥有大量资源的针对性威胁，攻击者仍可通过系统级键盘记录、屏幕截图或设备提权等手段获取您的信息。
+#### Technical Architecture:
+* **Parser Isolation:** Hooks render-critical methods in `MessageObject`, `ChatMessageCell`, `DownloadController`, and `FileLoader`. It forces incoming messages (`not out`) to strip `media` payloads (replacing them with `TLRPC$TL_messageMediaEmpty`), `reply_markup` configurations, and `entities`. This reduces the rendering attack surface.
+* **IP Leak Reduction:** Intercepts and drops outgoing VoIP requests (`phone.*`, `call.*`) and WebApp initialization vectors (`getWebView`, `requestWebView`), preventing IP harvesting through WebRTC peer-to-peer signalling or silent background browser loads.
+* **Telemetry Suppression:** Blocks `saveAppLog` requests and background contact imports (`importContacts`).
+* **Queue Jittering:** defers outgoing messages into a local queue, dynamically inserting delays into the `scheduleDate` parameters to disrupt automated active-hour tracking.
 
 ---
 
 ## 🇮🇷 فارسی
 
-این پلاگین با تبدیل پیام‌های متنی به استیکرهای شفاف WebP مجهز به نویز تقابلی، از جمع‌آوری انبوه داده‌ها توسط خزنده‌های خودکار جلوگیری می‌کند.
+### ۱. موتور اصلی: Sticker Engine
+این ماژول پیام‌های متنی ارسالی شما را به تصاویر استیکر شفاف با فرمت WebP تبدیل می‌کند. هدف اصلی این بخش، بالا بردن هزینه محاسباتی پایش اطلاعات برای سیستم‌های جمع‌آوری فله‌ای داده (مانند ابزارهای عمومی OSINT) است.
 
-### ویژگی‌های فنی
-* **مبارزه با خزش متنی:** تبدیل متن به رسانه جهت خالی گذاشتن فیلد متنی دیتابیس خزنده‌ها.
-* **نویز تقابلی لایه حروف:** ترسیم خطوط و نقاط تصادفی با آلفای متغیر روی سطح حروف جهت مخدوش کردن بخش‌بندی تصاویر در موتورهای OCR.
-* **اعوجاج هندسی بوم:** اعمال شیب افقی بسیار جزئی روی کل بوم و لرزش صدم‌پیکسلی موقعیت رسم حروف برای به خطا انداختن سیستم‌های تراز افقی هوش مصنوعی.
-* **تغییر مداوم هش فایل:** تصادفی‌سازی کیفیت فشرده‌سازی WebP بین ۷۶ تا ۸۴ درصد جهت دگرگونی مداوم بایت‌های فایل و تولید هش‌های یکتا در هر ارسال.
+#### ویژگی‌های فنی:
+* **تغییر نوع داده:** جایگزینی داده‌های متنی با استیکرهای WebP جهت به خطا انداختن خزنده‌های متنی ساده.
+* **لرزش صدم پیکسلی (Jitter):** جابه‌جایی جزئی حروف و سایه‌ها در هر بار رندر برای تغییر بایت‌های تصویر خروجی و تولید هش فایل (SHA-256) متفاوت در هر ارسال.
+* **کج‌نمایی بوم (Skewing):** کج کردن متن با زاویه‌های تصادفی افقی برای ایجاد اختلال در سیستم‌های تراز افقی متون در OCRها.
+* **نویزگذاری روی حروف:** ترسیم خطوط و نقطه‌های تصادفی با شفافیت متغیر روی سطح حروف چت (با متد `SRC_ATOP`) برای ایجاد اختلال در بخش‌بندی تصاویر در موتورهای پردازش تصویر.
 
-### مدل تهدید و سلب مسئولیت
-این ابزار صرفاً برای مقابله با **پایش فله‌ای، انبوه و غیرهدفمند کلمات کلیدی** طراحی شده است. در صورت وجود تهدیدات هدفمند شخصی (Targeted Surveillance) از سوی نهادهای دولتی یا مهاجمان پیشرفته، آن‌ها می‌توانند این سد را از طریق بردارهای فرعی مانند بدافزارهای ضبط کیبورد، تصویربرداری از صفحه نمایش یا آسیب‌پذیری‌های امنیتی سیستم‌عامل دور بزنند.
+**توجه واقعی:** این روش امنیت ۱۰۰٪ ایجاد نمی‌کند. ابزارهای هوش مصنوعی مالتی‌مودال جدید یا خزنده‌های مجهز به فیلترهای پیش‌پردازش تصویر با صرف هزینه محاسباتی و زمان بیشتر، همچنان قادر به خواندن این متون خواهند بود. این ابزار صرفاً پایش ارزان و فله‌ای را متوقف می‌کند.
+
+---
+
+### ۲. ابزار کمکی: AyuVeil (کاهش سطح آسیب‌پذیری و تلمتری)
+پلاگین **AyuVeil** (نسخه قبلی AyuPlus) یک ابزار آزمون سخت‌سازی کلاینت است که از طریق متد هوک‌ها و فیلتر کردن پکت‌های MTProto تلاش می‌کند برخی روزنه‌های نشت متادیتای سیستم را محدود کند.
+
+#### عملکرد فنی سخت‌سازی:
+* **کنترل پارسر تصاویر (کاهش ریسک آسیب‌پذیری‌های بدون کلیک):**
+  با هوک کردن کلاس‌های `MessageObject`، `ChatMessageCell`، `DownloadController` و `FileLoader` در پیام‌های دریافتی ناشناس، مقدار `media` را خالی کرده و فیلدهای دکمه‌های شیشه‌ای و انتیتی‌ها را پاکسازی می‌کند تا کلاینت را از پارس کردن متادیتای مخرب احتمالی محافظت کند.
+* **محدودسازی نشت آی‌پی از طریق لایه VoIP:**
+  با رهگیری و مسدود کردن درخواست‌های دارای امضای تماس (`phone.*` و `call.*`)، سیگنال‌دهی WebRTC را در سطح پروتکل متوقف می‌کند تا شانس افشای IP واقعی در بسترهای همتا‌به‌همتا کاهش یابد. همچنین درخواست‌های باز شدن وب‌اپ‌ها (`getWebView`) و خدمات مکانی کلاینت بلاک می‌شوند.
+* **مسدودسازی گزارش‌های خطا و آمارها:**
+  درخواست‌های مربوط به ثبت و ارسال لاگ‌های عیب‌یابی کلاینت (`saveAppLog`) و همچنین همگام‌سازی ناخواسته دفترچه مخاطبان با سرور تلگرام را فیلتر می‌کند.
+* **صف‌بندی پیام‌ها با تاخیر تصادفی:**
+  پیام‌ها را با تاخیرهای تصادفی ریز (Jitter) در زمان ارسال بازنویسی می‌کند تا تشخیص الگوهای آنلاین بودن و رفتارهای زمانی شما برای ناظران سخت‌تر شود.
 
 ---
 
@@ -78,7 +112,7 @@ To prevent OS-level font fingerprinting, you must supply a custom TrueType Font 
    `Android/data/<your.client.package>/cache/`
 3. In the plugin settings, enter the exact filename of the font (e.g., `myfont.ttf`). Do not leave this field blank.
 
-### 2. Plugin Deployment / Установка плагина
-1. Download the Python plugin file.
-2. Load the plugin into your modded Telegram client (e.g., exteraGram) by uploading it in save message.
-3. Turn on the "Enable Sticker Generator" switch in the plugin settings.
+### 2. Plugin Deployment / Установка плагинов
+1. Download both Python plugin files (`sticker_engine.py` and `ayu_veil.py`).
+2. Upload the files to your saved messages inside modded Telegram client (e.g., exteraGram / AyuGram) and load them.
+3. Configure the settings for both plugins as desired. Turn on the "Enable Sticker Generator" in Sticker Engine settings and activate the hardening rules in AyuVeil.
