@@ -1,3 +1,12 @@
+__id__ = "ayuveil"
+__name__ = "ayuveil"
+__description__ = "Chronological queue with ghost reply bypass, stealth commands, and accidental action blockers. Recommended to use alongside re:extra or AyuGram."
+__author__ = "nobody :-)"
+__version__ = "2.5.0"
+__icon__ = "exteraPlugins/1"
+__app_version__ = ">=12.8.1"
+__sdk_version__ = ">=1.4.3.10"
+
 from typing import Any, List
 import time
 import datetime
@@ -14,15 +23,6 @@ from org.telegram.tgnet import ConnectionsManager
 from org.telegram.messenger import NotificationCenter
 from client_utils import run_on_queue, send_message, PLUGINS_QUEUE, get_notification_center
 from android_utils import run_on_ui_thread
-
-__id__ = "ayuveil"
-__name__ = "ayuveil"
-__description__ = "Chronological queue with ghost reply bypass, stealth commands, and accidental action blockers. Recommended to use alongside re:extra or AyuGram."
-__author__ = "nobody :-)"
-__version__ = "2.5.0"
-__icon__ = "exteraPlugins/1"
-__app_version__ = ">=12.8.1"
-__sdk_version__ = ">=1.4.3.10"
 
 RequestDelegate = jclass("org.telegram.tgnet.RequestDelegate")
 
@@ -167,7 +167,7 @@ class FileLoaderHook(MethodHook):
                 return
 
             parent = None
-            for arg in args:
+            for arg in arg:
                 if arg is None:
                     continue
                 try:
@@ -377,6 +377,7 @@ class AyuPlusPlugin(BasePlugin):
         self.last_scheduled_time = {}
         self.ghost_chats_cache = {}
         self.ghost_linked_chats_cache = {}
+        self.ghost_leaving_channels = {}
         self.queue_lock = threading.Lock()
         self.add_on_send_message_hook()
         try:
@@ -678,7 +679,6 @@ class AyuPlusPlugin(BasePlugin):
             return True
 
     def get_calculated_delay(self, account: int, request_name: str) -> int:
-        """Unified helper to calculate precise delay based on the request type and connection state"""
         online_delay = self.get_setting_int("online_delay", 15)
         offline_delay = self.get_setting_int("offline_delay", 60)
         media_delay = self.get_setting_int("media_safety_delay", 300)
@@ -1066,11 +1066,11 @@ class AyuPlusPlugin(BasePlugin):
             if self.get_setting("strict_location_block", True):
                 self.show_toast("Location query blocked!")
                 return HookResult(strategy=HookStrategy.CANCEL)
-                
+        
         if "getWebPagePreview" in request_name or "getWebPage" in request_name:
             if self.get_setting("strict_preview_block", True):
                 return HookResult(strategy=HookStrategy.CANCEL)
-                
+
         if "sendMessage" in request_name or "editMessage" in request_name:
             if self.get_setting("strict_preview_block", True):
                 try:
@@ -1129,7 +1129,15 @@ class AyuPlusPlugin(BasePlugin):
                             channel_id = channel_id.longValue()
                         channel_id = int(channel_id)
                         self.add_ghost_chat(account, channel_id)
-                        return HookResult(strategy=HookStrategy.CANCEL)
+                        fake_updates = self.create_fake_updates()
+                        result = HookResult(strategy=HookStrategy.CANCEL)
+                        if fake_updates is not None:
+                            result.response = fake_updates
+                        else:
+                            fake_error = self.create_fake_error()
+                            if fake_error is not None:
+                                result.error = fake_error
+                        return result
             except Exception:
                 pass
         elif request_name == "TL_channels_leaveChannel":
@@ -1143,7 +1151,12 @@ class AyuPlusPlugin(BasePlugin):
                         channel_id = int(channel_id)
                         if self.is_ghost_joined(account, channel_id):
                             self.remove_ghost_chat(account, channel_id)
-                            return HookResult(strategy=HookStrategy.CANCEL)
+                            if not hasattr(self, "ghost_leaving_channels"):
+                                self.ghost_leaving_channels = {}
+                            if account not in self.ghost_leaving_channels:
+                                self.ghost_leaving_channels[account] = set()
+                            self.ghost_leaving_channels[account].add(channel_id)
+                            return HookResult()
             except Exception:
                 pass
         elif request_name == "TL_messages_setTyping":
@@ -1152,6 +1165,20 @@ class AyuPlusPlugin(BasePlugin):
                 channel_id = self.get_channel_id_from_peer(peer)
                 if channel_id and self.is_ghost_joined(account, channel_id):
                     return HookResult(strategy=HookStrategy.CANCEL)
+            except Exception:
+                pass
+        return HookResult()
+
+    def post_request_hook(self, request_name: str, account: int, response: Any, error: Any) -> HookResult:
+        if request_name == "TL_channels_leaveChannel":
+            try:
+                if hasattr(self, "ghost_leaving_channels") and account in self.ghost_leaving_channels:
+                    leaving_set = self.ghost_leaving_channels[account]
+                    if leaving_set:
+                        leaving_set.clear()
+                        fake_updates = self.create_fake_updates()
+                        if fake_updates is not None:
+                            return HookResult(strategy=HookStrategy.MODIFY_FINAL, response=fake_updates)
             except Exception:
                 pass
         return HookResult()
@@ -1615,3 +1642,26 @@ class AyuPlusPlugin(BasePlugin):
                         self.inject_dialog_ui(account, channel_id)
             except Exception:
                 pass
+
+    def create_fake_updates(self):
+        try:
+            try:
+                return jclass("org.telegram.tgnet.TLRPC$TL_updates")()
+            except Exception:
+                TLRPC = jclass("org.telegram.tgnet.TLRPC")
+                return TLRPC.TL_updates()
+        except Exception:
+            return None
+
+    def create_fake_error(self):
+        try:
+            try:
+                err = jclass("org.telegram.tgnet.TLRPC$TL_error")()
+            except Exception:
+                TLRPC = jclass("org.telegram.tgnet.TLRPC")
+                err = TLRPC.TL_error()
+            err.code = 400
+            err.text = "GHOST_CANCEL"
+            return err
+        except Exception:
+            return None
