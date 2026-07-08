@@ -2,7 +2,7 @@ __id__ = "ayuveil"
 __name__ = "ayuveil"
 __description__ = "Chronological queue with ghost reply bypass, stealth commands, and accidental action blockers. Recommended to use alongside re:extra or AyuGram."
 __author__ = "nobody :-)"
-__version__ = "2.5.5"
+__version__ = "2.5.6"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=0.0.0.0"
 __sdk_version__ = ">=0.0.0.0"
@@ -424,6 +424,15 @@ class AyuPlusPlugin(BasePlugin):
         self.add_hook("TL_messages_setTyping")
         self.add_hook("TL_messages_setEncryptedTyping")
         self.add_hook("TL_account_updateStatus")
+        
+        self.add_hook("TL_messages_readHistory")
+        self.add_hook("TL_channels_readHistory")
+        self.add_hook("TL_messages_readDiscussion")
+        self.add_hook("TL_messages_readEncryptedHistory")
+        self.add_hook("TL_messages_readMentions")
+        self.add_hook("TL_messages_readReactions")
+        self.add_hook("TL_stories_readStories")
+
         self.add_hook("TL_messages_saveDraft")
         self.add_hook("saveDraft", match_substring=True)
         self.add_hook("TL_messages_getInlineBotResults")
@@ -622,6 +631,13 @@ class AyuPlusPlugin(BasePlugin):
                 text="Block Online Status Updates",
                 default=True,
                 subtext="Completely blocks outgoing status update requests (keep-alive online signals) to keep your status offline.",
+                icon="msg_secret",
+            ),
+            Switch(
+                key="block_read_receipts",
+                text="Block All Read Receipts",
+                default=True,
+                subtext="Completely blocks marking messages, mentions, discussions, reactions, and stories as read (Ghost Read mode).",
                 icon="msg_secret",
             ),
             Switch(
@@ -1007,8 +1023,12 @@ class AyuPlusPlugin(BasePlugin):
     def pre_request_hook(self, request_name: str, account: int, request: Any) -> HookResult:
         if request_name == "TL_account_updateStatus":
             if self.get_setting("block_online_updates", True):
-                return HookResult(strategy=HookStrategy.CANCEL)
-                
+                try:
+                    setattr(request, "offline", True)
+                    return HookResult(strategy=HookStrategy.MODIFY, request=request)
+                except Exception:
+                    return HookResult(strategy=HookStrategy.CANCEL)
+                    
         if request_name in ["TL_messages_setTyping", "TL_messages_setEncryptedTyping"]:
             if self.get_setting("block_typing_globally", True):
                 return HookResult(strategy=HookStrategy.CANCEL)
@@ -1020,6 +1040,18 @@ class AyuPlusPlugin(BasePlugin):
             except Exception:
                 pass
             return HookResult()
+            
+        if request_name in [
+            "TL_messages_readHistory",
+            "TL_channels_readHistory",
+            "TL_messages_readDiscussion",
+            "TL_messages_readEncryptedHistory",
+            "TL_messages_readMentions",
+            "TL_messages_readReactions",
+            "TL_stories_readStories"
+        ]:
+            if self.get_setting("block_read_receipts", True):
+                return HookResult(strategy=HookStrategy.CANCEL)
 
         try:
             target_field = None
