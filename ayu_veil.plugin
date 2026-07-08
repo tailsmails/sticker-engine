@@ -2,7 +2,7 @@ __id__ = "ayuveil"
 __name__ = "ayuveil"
 __description__ = "Chronological queue with ghost reply bypass, stealth commands, and accidental action blockers. Recommended to use alongside re:extra or AyuGram."
 __author__ = "nobody :-)"
-__version__ = "2.5.7"
+__version__ = "2.5.9"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=0.0.0.0"
 __sdk_version__ = ">=0.0.0.0"
@@ -25,6 +25,19 @@ from client_utils import run_on_queue, send_message, PLUGINS_QUEUE, get_notifica
 from android_utils import run_on_ui_thread
 
 RequestDelegate = jclass("org.telegram.tgnet.RequestDelegate")
+
+def get_safe_class_name(obj) -> str:
+    if obj is None:
+        return ""
+    try:
+        if hasattr(obj, "getClass"):
+            return str(obj.getClass().getSimpleName())
+    except Exception:
+        pass
+    try:
+        return type(obj).__name__
+    except Exception:
+        return ""
 
 def get_data_path():
     try:
@@ -59,8 +72,8 @@ def save_data_to_file(data):
         pass
 
 class PresentFragmentHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -70,7 +83,13 @@ class PresentFragmentHook(MethodHook):
             fragment = param.args[0]
             if fragment is None:
                 return
-            class_name = fragment.getClass().getName()
+            
+            class_name = ""
+            if hasattr(fragment, "getClass"):
+                class_name = fragment.getClass().getName()
+            else:
+                class_name = type(fragment).__name__
+                
             if "ScheduledMessagesActivity" in class_name:
                 is_auto_open = False
                 for element in Thread.currentThread().getStackTrace():
@@ -85,8 +104,8 @@ class PresentFragmentHook(MethodHook):
             pass
 
 class GetChatHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -107,8 +126,8 @@ class GetChatHook(MethodHook):
             pass
 
 class GetChatFullHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -135,8 +154,8 @@ class GetChatFullHook(MethodHook):
             pass
 
 class AnalysisRequestDelegate(dynamic_proxy(RequestDelegate)):
-    def init(self, plugin, account, peer, invite_hash):
-        super().init()
+    def __init__(self, plugin, account, peer, invite_hash):
+        super().__init__()
         self.plugin = plugin
         self.account = account
         self.peer = peer
@@ -154,8 +173,8 @@ class AnalysisRequestDelegate(dynamic_proxy(RequestDelegate)):
             pass
 
 class FileLoaderHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -170,7 +189,7 @@ class FileLoaderHook(MethodHook):
                 if arg is None:
                     continue
                 try:
-                    cls_name = arg.getClass().getSimpleName()
+                    cls_name = get_safe_class_name(arg)
                     if "MessageObject" in cls_name or "TL_message" in cls_name or "Message" in cls_name:
                         parent = arg
                         break
@@ -184,7 +203,8 @@ class FileLoaderHook(MethodHook):
             if parent is None:
                 param.setResult(None)
                 return
-            cls_name = parent.getClass().getSimpleName()
+            
+            cls_name = get_safe_class_name(parent)
             message = None
             if "MessageObject" in cls_name:
                 message = getattr(parent, "messageOwner", None)
@@ -200,8 +220,8 @@ class FileLoaderHook(MethodHook):
             pass
 
 class DownloadControllerHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -224,8 +244,8 @@ class DownloadControllerHook(MethodHook):
             pass
 
 class AnimatedEmojiSpanHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -236,7 +256,7 @@ class AnimatedEmojiSpanHook(MethodHook):
             if args and len(args) > 0:
                 first_arg = args[0]
                 if first_arg is not None:
-                    cls_name = first_arg.getClass().getSimpleName()
+                    cls_name = get_safe_class_name(first_arg)
                     if "Long" in cls_name or "Integer" in cls_name or isinstance(first_arg, int):
                         param.args[0] = 0
                     else:
@@ -244,9 +264,56 @@ class AnimatedEmojiSpanHook(MethodHook):
         except Exception:
             pass
 
+class ImageReceiverHook(MethodHook):
+    def __init__(self, plugin):
+        super().__init__()
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        try:
+            if not self.plugin.get_setting("anti_exploit", True):
+                return
+            args = param.args
+            if not args or len(args) < 1:
+                return
+            
+            parent = None
+            for arg in args:
+                if arg is None:
+                    continue
+                cls_name = get_safe_class_name(arg)
+                if "MessageObject" in cls_name or "TL_message" in cls_name or "Message" in cls_name or "User" in cls_name or "Chat" in cls_name or "String" in cls_name or "str" in cls_name:
+                    parent = arg
+                    if "Message" in cls_name or "MessageObject" in cls_name:
+                        break
+            
+            if parent is None:
+                return
+
+            cls_name = get_safe_class_name(parent)
+            
+            if "MessageObject" in cls_name or "TL_message" in cls_name or "Message" in cls_name:
+                message = None
+                if "MessageObject" in cls_name:
+                    message = getattr(parent, "messageOwner", None)
+                else:
+                    message = parent
+                if message is not None:
+                    out = getattr(message, "out", False)
+                    if not out:
+                        param.args[0] = None
+                        if len(args) > 2 and get_safe_class_name(args[2]) == "ImageLocation":
+                            param.args[2] = None
+            else:
+                param.args[0] = None
+                if len(args) > 2 and get_safe_class_name(args[2]) == "ImageLocation":
+                    param.args[2] = None
+        except Exception:
+            pass
+
 class MessageObjectHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def after_hooked_method(self, param):
@@ -281,8 +348,8 @@ class MessageObjectHook(MethodHook):
             pass
 
 class ChatMessageCellHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -320,8 +387,8 @@ class ChatMessageCellHook(MethodHook):
             pass
 
 class InetAddressHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -337,8 +404,8 @@ class InetAddressHook(MethodHook):
             pass
 
 class SocketConnectHook(MethodHook):
-    def init(self, plugin):
-        super().init()
+    def __init__(self, plugin):
+        super().__init__()
         self.plugin = plugin
 
     def before_hooked_method(self, param):
@@ -395,12 +462,12 @@ class AyuPlusPlugin(BasePlugin):
             pass
         try:
             AnimatedEmojiSpan = jclass("org.telegram.ui.Components.AnimatedEmojiSpan")
-            self.hook_all_methods(AnimatedEmojiSpan, "", AnimatedEmojiSpanHook(self))
+            self.hook_all_methods(AnimatedEmojiSpan, "<init>", AnimatedEmojiSpanHook(self))
         except Exception:
             pass
         try:
             MessageObject = jclass("org.telegram.messenger.MessageObject")
-            self.hook_all_methods(MessageObject, "", MessageObjectHook(self))
+            self.hook_all_methods(MessageObject, "<init>", MessageObjectHook(self))
         except Exception:
             pass
         try:
@@ -418,6 +485,11 @@ class AyuPlusPlugin(BasePlugin):
             Socket = jclass("java.net.Socket")
             self.hook_all_methods(Socket, "connect", SocketConnectHook(self))
         except Exception:
+            pass
+        try: 
+            ImageReceiver = jclass("org.telegram.messenger.ImageReceiver") 
+            self.hook_all_methods(ImageReceiver, "setImage", ImageReceiverHook(self)) 
+        except Exception: 
             pass
 
         self.add_hook("TL_channels_joinChannel")
@@ -753,7 +825,7 @@ class AyuPlusPlugin(BasePlugin):
                     if fragments is not None and fragments.size() > 0:
                         for i in range(fragments.size() - 1, -1, -1):
                             fragment = fragments.get(i)
-                            cls_name = fragment.getClass().getSimpleName()
+                            cls_name = get_safe_class_name(fragment)
                             if "ChatActivity" in cls_name:
                                 args = getattr(fragment, "arguments", None)
                                 if args is None and hasattr(fragment, "getArguments"):
@@ -895,7 +967,7 @@ class AyuPlusPlugin(BasePlugin):
                 title = "Unknown"
                 about = "No description"
                 participants = 0
-                cls_name = response.getClass().getSimpleName()
+                cls_name = get_safe_class_name(response)
                 verified = False
                 scam = False
                 fake = False
@@ -970,7 +1042,7 @@ class AyuPlusPlugin(BasePlugin):
                                 user_status_text = ""
                                 status = getattr(user, "status", None)
                                 if status is not None:
-                                    status_cls = status.getClass().getSimpleName()
+                                    status_cls = get_safe_class_name(status)
                                     if status_cls == "TL_userStatusOnline":
                                         expires = getattr(status, "expires", 0)
                                         if expires > 0:
@@ -985,6 +1057,7 @@ class AyuPlusPlugin(BasePlugin):
                                     sample_members.append(f"{name} (@{username}){user_status_text}")
                                 elif name:
                                     sample_members.append(f"{name}{user_status_text}")
+                
                 status_flags = []
                 if verified:
                     status_flags.append("Verified Official")
@@ -1106,7 +1179,7 @@ class AyuPlusPlugin(BasePlugin):
                         setattr(request, target_field, int(calculated_schedule))
                         if hasattr(request, "flags"):
                             flag_bit = 32768 if "editMessage" in request_name else 1024
-                            request.flags = int(request.flags) | flag_bit
+                            request.flags = int(request.flags) | 1024
                         return HookResult(strategy=HookStrategy.MODIFY, request=request)
         except Exception:
             pass
@@ -1473,7 +1546,7 @@ class AyuPlusPlugin(BasePlugin):
                 peer_id = self.get_channel_id_from_peer(peer)
                 peer_type = "channel"
                 if peer is not None:
-                    cls_name = peer.getClass().getSimpleName()
+                    cls_name = get_safe_class_name(peer)
                     if "User" in cls_name:
                         peer_type = "user"
                     elif "Chat" in cls_name:
@@ -1658,7 +1731,7 @@ class AyuPlusPlugin(BasePlugin):
             dialog.top_message = 0
             is_channel = True
             if chat is not None:
-                cls_name = chat.getClass().getSimpleName()
+                cls_name = get_safe_class_name(chat)
                 if "Chat" in cls_name:
                     is_channel = False
             if is_channel:
@@ -1721,8 +1794,8 @@ class AyuPlusPlugin(BasePlugin):
                     req.id.add(jclass("java.lang.Long")(int(cid)))
                 RequestDelegate = jclass("org.telegram.tgnet.RequestDelegate")
                 class SimpleDelegate(dynamic_proxy(RequestDelegate)):
-                    def init(self, act):
-                        super().init()
+                    def __init__(self, act):
+                        super().__init__()
                         self.act = act
                     def run(self, response, error):
                         if response is not None:
