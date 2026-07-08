@@ -70,6 +70,31 @@ class AntiOsintStickerPlugin(BasePlugin):
                 text="Custom Font Path / Filename",
                 default="",
                 subtext="To prevent device-fingerprinting, place a standard TTF file inside Cache folder (Android/data/.../cache/) and enter its name (e.g. ga.ttf). Avoid leaving this blank.",
+            ),
+            Header(text="Volume Protection Options"),
+            Switch(
+                key="enable_garbage",
+                text="Enable Fixed Garbage Volume",
+                default=False,
+                subtext="Append a fixed amount of dummy data to the WebP sticker.",
+            ),
+            Input(
+                key="garbage_size_kb",
+                text="Garbage Size (KB)",
+                default="100",
+                subtext="Enter size in Kilobytes of junk bytes to append.",
+            ),
+            Switch(
+                key="enable_padding",
+                text="Enable Size Padding (Anti-Traffic Analysis)",
+                default=True,
+                subtext="Appends random-sized bytes to prevent side-channel sizing attacks on stickers.",
+            ),
+            Input(
+                key="padding_range_kb",
+                text="Padding Range (KB)",
+                default="10-50",
+                subtext="Range of random padding to add in KB (format: Min-Max, e.g. 10-50).",
             )
         ]
 
@@ -170,6 +195,55 @@ class AntiOsintStickerPlugin(BasePlugin):
         except Exception:
             return False
 
+    def apply_volume_protection(self, file_path: str):
+        if not os.path.exists(file_path):
+            return
+
+        garbage_enabled = self.get_setting("enable_garbage", False)
+        padding_enabled = self.get_setting("enable_padding", True)
+
+        bytes_to_add = 0
+        
+        if garbage_enabled:
+            garbage_size_val = self.get_setting("garbage_size_kb", "100")
+            try:
+                garbage_kb = int(float(str(garbage_size_val).strip()))
+                if garbage_kb > 0:
+                    bytes_to_add += garbage_kb * 1024
+            except Exception:
+                pass
+                
+        if padding_enabled:
+            padding_range_val = self.get_setting("padding_range_kb", "10-50")
+            try:
+                range_str = str(padding_range_val).strip()
+                if "-" in range_str:
+                    parts = range_str.split("-")
+                    min_kb = int(float(parts[0].strip()))
+                    max_kb = int(float(parts[1].strip()))
+                else:
+                    min_kb = 0
+                    max_kb = int(float(range_str))
+                
+                if min_kb < 0:
+                    min_kb = 0
+                if max_kb < min_kb:
+                    max_kb = min_kb
+                
+                if max_kb > 0:
+                    random_kb = random.randint(min_kb, max_kb)
+                    bytes_to_add += random_kb * 1024
+            except Exception:
+                bytes_to_add += random.randint(10, 50) * 1024
+
+        if bytes_to_add > 0:
+            try:
+                junk = os.urandom(bytes_to_add)
+                with open(file_path, "ab") as f:
+                    f.write(junk)
+            except Exception:
+                pass
+
     def on_send_message_hook(self, account: int, params: Any) -> HookResult:
         try:
             message = getattr(params, "message", None)
@@ -221,6 +295,8 @@ class AntiOsintStickerPlugin(BasePlugin):
                 actual_file_path, err_desc = self.text_to_webp(clean_text, base_file_path, text_color)
 
                 if actual_file_path and os.path.exists(actual_file_path):
+                    self.apply_volume_protection(actual_file_path)
+
                     peer = getattr(params, "peer", None)
                     
                     reply_to_id = self.find_reply_to_id(params)
