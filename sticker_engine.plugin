@@ -457,21 +457,7 @@ class AntiOsintStickerPlugin(BasePlugin):
             text_w = max_text_width + 40
             text_h = total_text_height + 100
 
-            if text_w >= text_h:
-                scale = 512.0 / text_w
-                target_width = 512
-                target_height = int(text_h * scale)
-                if target_height > 512:
-                    target_height = 512
-            else:
-                scale = 512.0 / text_h
-                target_height = 512
-                target_width = int(text_w * scale)
-                if target_width > 512:
-                    target_width = 512
-
-            target_width = max(100, target_width)
-            target_height = max(100, target_height)
+            scale = 512.0 / max(text_w, text_h)
 
             scaled_font_size = font_size * scale
             paint.setTextSize(float(scaled_font_size))
@@ -480,6 +466,16 @@ class AntiOsintStickerPlugin(BasePlugin):
             fontMetrics = paint.getFontMetricsInt()
             line_height = fontMetrics.bottom - fontMetrics.top
             font_top = fontMetrics.top
+
+            target_height = 512
+
+            min_width = int((max_text_width + 40.0) * scale)
+            min_width = max(100, min_width)
+            
+            if min_width >= 512:
+                target_width = 512
+            else:
+                target_width = random.randint(min_width, 512)
 
             bitmap = Bitmap.createBitmap(target_width, target_height, argb_config)
             canvas = Canvas(bitmap)
@@ -499,9 +495,12 @@ class AntiOsintStickerPlugin(BasePlugin):
             shadow_paint.setARGB(160, 0, 0, 0)
             shadow_paint.setTextSize(paint.getTextSize())
             try:
-                shadow_paint.setTypeface(paint.getTypeface())
+                shadow_paint.setTypeface(paint.setTypeface())
             except Exception:
                 pass
+
+            scaled_text_w = max_text_width * scale
+            x_offset = (target_width - scaled_text_w) / 2.0
 
             try:
                 current_align_enum = paint.getTextAlign()
@@ -513,13 +512,15 @@ class AntiOsintStickerPlugin(BasePlugin):
                 shadow_paint.setTextAlign(align_val)
                 
                 if is_rtl_text:
-                    x_pos = float(target_width - (20.0 * scale))
+                    x_pos = float(target_width - x_offset)
                 else:
-                    x_pos = float(20.0 * scale)
+                    x_pos = float(x_offset)
             except Exception:
-                x_pos = float(20.0 * scale)
+                x_pos = float(x_offset)
 
-            start_y = (20.0 * scale) - font_top
+            total_scaled_text_height = total_text_height * scale
+            y_offset = (512.0 - total_scaled_text_height) / 2.0
+            start_y = y_offset - font_top
             current_y = start_y
 
             for i, line in enumerate(lines):
@@ -574,7 +575,7 @@ class AntiOsintStickerPlugin(BasePlugin):
                             x1 = float(random.uniform(0, target_width))
                             y1 = float(random.uniform(0, target_height))
                             x2 = float(random.uniform(0, target_width))
-                            y2 = float(random.uniform(0, target_height))
+                            y2 = float(random.uniform(0, target_width))
                             canvas.drawLine(x1, y1, x2, y2, noise_paint)
                         
                         for _ in range(120):
