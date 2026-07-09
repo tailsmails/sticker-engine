@@ -442,6 +442,8 @@ class AyuPlusPlugin(BasePlugin):
         self.queues = {}
         self.processing = {}
         self.last_scheduled_time = {}
+        self.sendlong_active = {}
+        self.sending_long_from_queue = {}
         self.ghost_chats_cache = {}
         self.ghost_linked_chats_cache = {}
         self.ghost_leaving_channels = {}
@@ -861,6 +863,22 @@ class AyuPlusPlugin(BasePlugin):
             pass
         return 0, False
 
+    def is_sendlong_active(self, account: int) -> bool:
+        if not hasattr(self, "sendlong_active"):
+            self.sendlong_active = {}
+        if account not in self.sendlong_active:
+            data = load_saved_data()
+            self.sendlong_active[account] = data.get(f"sendlong_active_{account}", False)
+        return self.sendlong_active[account]
+
+    def set_sendlong_active(self, account: int, active: bool):
+        if not hasattr(self, "sendlong_active"):
+            self.sendlong_active = {}
+        self.sendlong_active[account] = active
+        data = load_saved_data()
+        data[f"sendlong_active_{account}"] = active
+        save_data_to_file(data)
+
     def on_send_message_hook(self, account: int, params: Any) -> HookResult:
         if getattr(self, "sending_from_queue", False):
             return HookResult()
@@ -889,6 +907,24 @@ class AyuPlusPlugin(BasePlugin):
                 return HookResult(strategy=HookStrategy.CANCEL)
         except Exception:
             pass
+
+        try:
+            msg = getattr(params, "message", "")
+            caption = getattr(params, "caption", "")
+            for txt in [msg, caption]:
+                if txt:
+                    txt_strip = txt.strip().lower()
+                    if txt_strip == ".sendlong on":
+                        self.set_sendlong_active(account, True)
+                        self.show_toast("Sendlong mode enabled!")
+                        return HookResult(strategy=HookStrategy.CANCEL)
+                    elif txt_strip == ".sendlong off":
+                        self.set_sendlong_active(account, False)
+                        self.show_toast("Sendlong mode disabled!")
+                        return HookResult(strategy=HookStrategy.CANCEL)
+        except Exception:
+            pass
+
         if self.get_setting("always_silent", True):
             try:
                 options = getattr(params, "options", None)
@@ -899,20 +935,6 @@ class AyuPlusPlugin(BasePlugin):
             except Exception:
                 pass
 
-        is_long_delay = False
-        try:
-            msg_str = getattr(params, "message", "")
-            caption_str = getattr(params, "caption", "")
-            if msg_str and msg_str.startswith(".sendlong "):
-                cleaned = msg_str[10:].strip()
-                setattr(params, "message", cleaned)
-                is_long_delay = True
-            elif caption_str and caption_str.startswith(".sendlong "):
-                cleaned = caption_str[10:].strip()
-                setattr(params, "caption", cleaned)
-                is_long_delay = True
-        except Exception:
-            pass
         try:
             if not self.get_setting("enable_queue", True):
                 if self.get_setting("ghost_join", True) and self.get_setting("ghost_reply_fallback", True):
@@ -934,6 +956,9 @@ class AyuPlusPlugin(BasePlugin):
                     self.queues[account] = []
                 self.processing[account] = False
                 self.last_scheduled_time[account] = 0
+                
+                is_long_delay = self.is_sendlong_active(account)
+                
                 msg_data = {
                     "peer": getattr(params, "peer", None),
                     "message": getattr(params, "message", None),
@@ -1173,6 +1198,26 @@ class AyuPlusPlugin(BasePlugin):
                     server_time = local_time
                 now = max(server_time, local_time)
                 
+                is_long_active = getattr(self, "sending_long_from_queue", {}).get(account, False)
+                if is_long_active:
+                    min_hours = self.get_setting_int("long_delay_min", 4)
+                    max_hours = self.get_setting_int("long_delay_max", 24)
+                    if min_hours < 1:
+                        min_hours = 1
+                    if max_hours < min_hours:
+                        max_hours = min_hours + 1
+                    random_hours = random.uniform(min_hours, max_hours)
+                    target_delay = int(random_hours * 3600)
+                    calculated_schedule = now + target_delay
+                    adjusted_schedule = self.adjust_to_active_hours(calculated_schedule)
+                    
+                    self.last_scheduled_time[account] = adjusted_schedule
+                    setattr(request, target_field, int(adjusted_schedule))
+                    if hasattr(request, "flags"):
+                        flag_bit = 32768 if "editMessage" in request_name else 1024
+                        request.flags = int(request.flags) | flag_bit
+                    return HookResult(strategy=HookStrategy.MODIFY, request=request)
+
                 if sched_date > 0:
                     safety_threshold = now + 60
                     if sched_date < safety_threshold:
@@ -1524,10 +1569,15 @@ class AyuPlusPlugin(BasePlugin):
                 msg["notify"] = not always_silent
                 
                 self.sending_from_queue = True
+                if is_long:
+                    self.sending_long_from_queue[account] = True
+                else:
+                    self.sending_long_from_queue[account] = False
                 try:
                     send_message(msg)
                 finally:
                     self.sending_from_queue = False
+                    self.sending_long_from_queue[account] = False
 
                 time.sleep(1.0)
         except Exception:
