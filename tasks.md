@@ -1,1 +1,1 @@
-- [ ] fix problems with !sendlong (ayuveil)
+- [x] fix problems with !sendlong (ayuveil)
