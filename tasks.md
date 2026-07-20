@@ -1,1 +1,2 @@
 - [x] fix problems with !sendlong (ayuveil)
+- [ ] fix problems with callback inspector
